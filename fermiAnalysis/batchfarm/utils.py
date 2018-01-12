@@ -86,7 +86,7 @@ def set_njobs(njobs, missing, irf = "None", clobber = False):
     logging.debug('missing: {0}'.format(missing))
     return njobs
 
-def mkdir(directory, log = True):
+def mkdir(directory, log = True, dry = False):
     """
     Create a new directory
 
@@ -97,14 +97,16 @@ def mkdir(directory, log = True):
     kwargs
     ------
     log:	bool, if True, report new directory 
+    dry:	bool, if True, don't create dir
 
     Returns
     -------
     directory: string of new directory
     """
     if not exists(directory):
-	call(['mkdir','-p',directory])
-	sleep(1.)
+	if not dry:
+	    call(['mkdir','-p',directory])
+	    sleep(1.)
 	if log:
 	    logging.info('Set up directory {0:s}'.format(directory))
 
