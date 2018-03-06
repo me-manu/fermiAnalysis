@@ -30,6 +30,47 @@ class XrootdSelect(object):
             self.flist = XrootdSelect.xrdft1list
         return
 
+    def create_shortlist(self, tmin, tmax, outdir):
+        """
+        Create a short file list that contains 
+        only the files with events within tmin and tmax
+
+        Parameters
+        ----------
+        tmin: float
+            minimum observation time in MET
+
+        tmax: float
+            maximum observation time in MET
+
+        outdir: str
+            path to output file
+
+        Returns
+        -------
+        path to new output file
+        """
+        with open(self.flist) as f: 
+            li = f.readlines()
+        files = []
+
+        for l in li:
+            tstart = int(path.basename(l).split('_')[-2].strip('r'))
+            if tstart >= tmin and tstart < tmax:
+                files.append(l)
+
+        if not len(files):
+            raise Exception("No files selected!")
+        else:
+            logging.info("Shortlist contains {0:n} files".format(len(files)))
+
+        with open(path.join(outdir,'tmpfilelist.txt'), 'w') as f:
+            for fi in files:
+                f.write(fi)
+
+        return path.join(outdir,'tmpfilelist.txt')
+
+
     def make_cmd_str(self,**conf):
         """
         Make a string to run gtselect with chosen parameters

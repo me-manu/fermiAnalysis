@@ -29,17 +29,17 @@ def binblock_unbinned(times, exp = np.array([]), p0 = 0.05, itr = 1):
     counts = np.ones_like(widths)
 
     if exp.size: 
-	expw = exp[:-1]
+        expw = exp[:-1]
     else:
-	expw = exp
+        expw = exp
 
     bb, avg = binbblock (widths, counts, p0=p0, itr = itr, datatype = 'unbinned',
-			    exp =expw)
+                            exp =expw)
 
     return np.concatenate([times[:-1][bb], [times[-1]]])
 
 def binbblock (widths, counts, p0=0.05, itr = 1, datatype = 'unbinned',
-		errs = np.array([]), exp = np.array([])):
+                errs = np.array([]), exp = np.array([])):
     """
     Calculate Bayesian blocks 
     
@@ -99,7 +99,7 @@ def binbblock (widths, counts, p0=0.05, itr = 1, datatype = 'unbinned',
         raise ValueError ("datatype must be either 'binned', 'unbinned', or 'point'.")
 
     if exp.size:
-	counts /= exp
+        counts /= exp
 
     if not datatype == 'point':
         vedges = np.cumsum (np.concatenate (([0], widths))) # size: ncells + 1
@@ -114,7 +114,7 @@ def binbblock (widths, counts, p0=0.05, itr = 1, datatype = 'unbinned',
     # iterate over prior
     for _ in xrange (itr):
         ncp_prior = prior(p0)
-	#print "Prior on blocks is ", ncp_prior
+        #print "Prior on blocks is ", ncp_prior
 
         for r in xrange (ncells):
             if datatype == 'point':
@@ -215,8 +215,8 @@ def bayesian_blocks(t, p0 = 0.05, exp = np.array([])):
 
     {options}
     exp: scalar or `~numpy.ndarray`
-	exposure, corrects the counts by 1 / exp, 
-	if array, needs to be of length N
+        exposure, corrects the counts by 1 / exp, 
+        if array, needs to be of length N
 
     Notes
     -----
@@ -239,7 +239,7 @@ def bayesian_blocks(t, p0 = 0.05, exp = np.array([])):
     # arrays needed for the iteration
     nn_vec = np.ones(N)
     if exp.size:
-	 nn_vec /= exp
+         nn_vec /= exp
     best = np.zeros(N, dtype=float)
     last = np.zeros(N, dtype=int)
     
@@ -330,74 +330,100 @@ def remove_gti_blocks(block_bins, times, gtistart, gtistop):
 
 
 
-def flare_search(flux, tmin, thr_flux, avg_flux, min_fl_flux, decr_thr = False):
+def flare_search(flux, tmin, thr_flux, avg_flux,
+    min_fl_flux, decr_thr = False, append = 0.):
     """
     Search for flares
 
     Parameters
     ----------
     flux: `~numpy.ndarray`
-	n-dim array with time series of flux in bayesian block
+        n-dim array with time series of flux in bayesian block, with last flux appended 
     tmin: `~numpy.ndarray`
-	n-dim array with start time of bayesian block
+        n-dim array with start time of bayesian block, with last end time appended
     thr_flux: float
-	number by which average flux has to increase so that 
-	flux is considered a flare
+        number by which average flux has to increase so that 
+        flux is considered a flare
     avg_flux: float
-	Average flux
+        Average flux
     min_fl_flux: float
-	minimum flux so that block will still be considered a flare
+        minimum flux so that block will still be considered a flare
+    decr_thr: bool
+        if True, decrease threshold if no flare is detected
+        default: False
+    append: float
+        for each flare, extend it by this amount in days. Combine flares that overlap.
+        default: 0.
     """
     idx = np.where(flux >= thr_flux * avg_flux)
+    logging.debug(idx)
+    logging.debug("Extending flares by {0} days".format(append))
 
     # decrease threshold flux if there's no flare detected
     if decr_thr:
-	while (not len(idx[0])) and thr_flux >= 1.5 and thr_flux > min_fl_flux:
-	    idx = np.where(flux > avg_flux)
-	    thr_flux -= 0.1
+        while (not len(idx[0])) and thr_flux >= 1.5 and thr_flux > min_fl_flux:
+            idx = np.where(flux > avg_flux)
+            thr_flux -= 0.1
     #print "idx above thr_flux: ", idx, thr_flux # these are the indices of the blocks with flux > thr_flux
     
     # create an interval around each flare: include everything up to first block where flux is 
     # down to some level (e.g. 2 * average)
     # only works if there are more than one bayesian block
     if flux.size == 1:
-	logging.warning("Only one bayesian block in time series!")
-	return np.array([])
+        logging.warning("Only one bayesian block in time series!")
+        return np.array([])
 
     flare_ids = []
     
     for ij,ii in enumerate(idx[0]):
-	flare_blocks = [ii]
-	if ij > 0: # check if flare is already contained in last interval
-	    if ii in flare_ids[-1]:
-		continue
-	db = 1
-	# go back in time from flare
-	while flux[ii - db] > avg_flux * min_fl_flux:
+        flare_blocks = [ii]
+        if ij > 0: # check if flare is already contained in last interval
+            if ii in flare_ids[-1]:
+                continue
+        db = 1
+        # go back in time from flare
+        while flux[ii - db] > avg_flux * min_fl_flux:
                 flare_blocks.insert(0,ii - db)
                 db += 1
-		if ii - db <= 0: 
-		    db -= 1
-		    break
+                if ii - db <= 0: 
+                    db -= 1
+                    break
         
-	if ii == flux.size - 1:
-	    #print "flare blocks: ", ij, flare_blocks
-	    continue
-	# go forward in time from flare
-	db = 1
-	while flux[ii + db] > avg_flux * min_fl_flux: 
-	    flare_blocks.append(ii + db)
-	    db += 1
-	    if ii + db >= flux.size: 
-		db -= 1
-		break
+        if ii == flux.size - 1:
+            #print "flare blocks: ", ij, flare_blocks
+            continue
+        # go forward in time from flare
+        db = 1
+        while flux[ii + db] > avg_flux * min_fl_flux: 
+            flare_blocks.append(ii + db)
+            db += 1
+            if ii + db >= flux.size: 
+                db -= 1
+                break
             
-	flare_blocks.append(ii + db)    
-	#print "flare blocks: ", ij, flare_blocks
+        flare_blocks.append(ii + db)    
+        #print "flare blocks: ", ij, flare_blocks
 
-	flare_ids.append(np.array(flare_blocks))
+        flare_ids.append(np.array(flare_blocks))
+    
     t_flare = []
-    for ij, fi in enumerate(flare_ids):
-	t_flare.append([tmin[fi].min(), tmin[np.array(fi).max()]])
+    #print 'flare_ids'
+    #print flare_ids
+    #for ij, fi in enumerate(flare_ids):
+        #t_flare.append([tmin[fi].min(), tmin[np.array(fi).max()]])
 
-    return np.array(t_flare)
+    for ij, fi in enumerate(flare_ids):
+
+        if len(t_flare) and t_flare[-1][-1] >= tmin[np.array(fi).max()]:
+            continue
+
+        tf_min = tmin[fi].min() - append
+        tf_max = tmin[np.array(fi).max()] + append
+
+        add = 1
+        while ij < len(flare_ids) - add and tf_max >= tmin[flare_ids[ij+add]].min() - append:
+            tf_max = tmin[np.array(flare_ids[ij + add]).max()] + append
+            add += 1
+        t_flare.append([tf_min, tf_max])
+
+    return np.array(t_flare), flare_ids

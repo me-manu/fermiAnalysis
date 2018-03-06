@@ -9,6 +9,84 @@ from os import path
 from fermipy.utils import met_to_mjd
 from scipy.stats import linregress
 import fermiAnalysis as fa 
+import subprocess
+
+def excise_solar_flares_grbs(tsmin = 100.,
+    sf_file = "/u/gl/omodei/SunMonitor_P8/SUN-ORB-TEST/SUN-ORB-TEST_jean.txt",
+    grb_file = "/u/gl/omodei/GBMTRIGCAT-v2/DATA/LAT2CATALOG-v4-LTF/LAT2CATALOG-v4-LTF_jean.txt",
+    tmax = 915148805.,outdir = "./"):
+    """
+    Derive a filter expression to exclude bright solar flares and GRBs
+
+    Parameters
+    ----------
+    tsmin: float
+        minimum ts for which solar flare or grb will be excluded (default: 100.)
+    sf_file: str
+        path to file with solar flare times and ts values
+    grb_file: str
+        path to file with solar flare times and ts values
+    tmax: float
+        maximum mission lifetime in MET (default: 01-01-2030)
+    outidr: str
+        path where output files are stored (default: ./)
+
+    Returns
+    -------
+    Path to fits file containing the GTIs
+    """
+    sf = np.loadtxt(sf_file, usecols = (3,5,6), delimiter = ',')
+    grb = np.loadtxt(grb_file, usecols = (3,5,6), delimiter = ',')
+    ms = sf[:,-1] >= tsmin # cut on solar flares
+    mg = grb[:,-1] >= tsmin # cut on grbs
+    #filter_str = "!((START >= {start:.2f} && STOP < {stop:.2f})" \
+    #             "||(START < {start:.2f} && STOP > {start:.2f} && STOP < {stop:.2f})" \
+    #             "||(START < {stop:.2f} && STOP > {stop:.2f} && START >= {start:.2f}))"
+    #out = ""
+    #for s in sf[ms]:
+        #out += filter_str.format(start = s[0],stop = s[0] + s[1])
+        #out += "&&"
+    #for i,g in enumerate(grb[mg]):
+    #    out += filter_str.format(start = g[0],stop = g[0] + g[1])
+    #    if i < np.sum(mg) - 1:
+    #        out += "&&"
+    #sum_excl = sf[ms][:,1].sum() + grb[mg][:,1].sum()
+    #logging.info("Excluding {0:.2f} days".format(sum_excl / 3600. / 24.))
+
+    # concetanate the two 
+    btis = np.vstack([sf[ms], grb[mg]])
+    # sort them
+    btis = btis[np.argsort(btis[:,0])]
+
+    # remove overlaping intervals by combining them
+    bti_start = []
+    bti_stop = []
+
+    bti_start = btis[:,0]
+    bti_stop = btis[:,0] + btis[:,1]
+
+    stop,start = bti_stop[:-1] , bti_start[1:]
+    m = np.where(stop > start)
+    while len(m[0]):
+        bti_stop = np.concatenate([np.delete(bti_stop[:-1], m[0][0]), [bti_stop[-1]]])
+        bti_start = np.concatenate([[bti_start[0]],np.delete(bti_start[1:], m[0][0])])
+        stop,start = bti_stop[:-1] , bti_start[1:]
+        m = np.where(stop > start)
+
+    gti_start = np.concatenate([[0.], bti_stop])
+    gti_stop = np.concatenate([bti_start , [tmax]])
+    gtis = np.vstack([gti_start, gti_stop])
+
+    header ="""START D\nSTOP D"""
+    np.savetxt(path.join(outdir,"gtis.txt"),gtis.T)
+    with open(path.join(outdir, "header.txt"),'w') as f:
+        f.write(header)
+        f.close()
+    subprocess.call(['ftcreate', path.join(outdir, "header.txt"),
+            path.join(outdir,"gtis.txt"), path.join(outdir, 'nosolarflares_nogrbs.gti'),
+            "clobber=yes","extname=GTI"])
+    
+    return path.join(outdir, 'nosolarflares_nogrbs.gti')
 
 def mjd_to_met(time):
     """Convert MJD to Fermi MET"""
@@ -16,9 +94,31 @@ def mjd_to_met(time):
     #""""Convert mission elapsed time to mean julian date."""
     #    return 54682.65 + (time - 239557414.0) / (86400.)
 
-def fit_with_retries(gta, fit_config, target):
+def fit_with_retries(gta, fit_config, target, alt_spec_pars = None):
     """Fit the model and retry if not converged"""
-    f = gta.fit()
+
+    try:
+        o = gta.optimize() # perform an initial fit
+        logging.debug(o)
+        gta.print_roi()
+    except RuntimeError as e:
+        logging.warning("optimize failed with {0}. Trying alternative parameters".format(e))
+        if not type(alt_spec_pars) == type(None):
+            gta.set_source_spectrum(target,
+                spectrum_type = gta.roi.get_source_by_name(target)['SpectrumType'],
+                spectrum_pars= alt_spec_pars.spectral_pars)
+
+    try:
+        f = gta.fit()
+    except RuntimeError as e:
+        logging.warning("fit failed with {0}. Trying to alternative parameters".format(e))
+        if not type(alt_spec_pars) == type(None):
+            gta.set_source_spectrum(target,
+                spectrum_type = gta.roi.get_source_by_name(target)['SpectrumType'],
+                spectrum_pars= alt_spec_pars.spectral_pars)
+
+
+    nfree0 = print_free_sources(gta)
 
     retries = f['config']['retries']
     tsfix = fit_config['ts_fixed']
@@ -27,11 +127,13 @@ def fit_with_retries(gta, fit_config, target):
         tsfix *= 3
         gta.free_sources(minmax_ts=[None,tsfix],free=False,
                         pars=fa.allidx + fa.allnorm)
-        logging.info("retrying fit")
-        for s in  gta.get_sources() :                                                           
-            for k in s.spectral_pars.keys():
-                if s.spectral_pars[k]['free']:   
-                    logging.info('{0:s}: {1:s}'.format(s.name, k))
+        logging.info("retrying fit, {0:n} retries left".format(retries))
+        nfree = print_free_sources(gta)
+        if nfree == nfree0:
+            continue
+        else:
+            nfree0 = nfree
+            logging.info("Retrying fit with {0:n} free parameters".format(nfree))
         try:
             o = gta.optimize() # perform an initial fit
             logging.debug(o)
@@ -39,18 +141,19 @@ def fit_with_retries(gta, fit_config, target):
         except RuntimeError as e:
             logging.warning("optimize failed with {0}. Trying to continue anyway".format(e))
 
-        print_free_sources(gta)
         f = gta.fit()
         retries -= 1
 
     if not f['fit_success']:
+        logging.warning("fit did not suceed, fixing beta and Index2")
         gta.free_source(target, pars = ['beta', 'Index2'], free = False)
-        print_free_sources(gta)
+        nfree = print_free_sources(gta)
+        logging.warning('Now there are {0:n} free parameters'.format(nfree))
         f = gta.fit()
 
     return f,gta
 
-def set_free_pars_avg(gta, fit_config):
+def set_free_pars_avg(gta, fit_config, freezesupexp = False):
     """
     Freeze are thaw fit parameters for average fit
     """
@@ -80,7 +183,11 @@ def set_free_pars_avg(gta, fit_config):
     # Fix sources Npred < Z
     gta.free_sources(minmax_npred=[None,fit_config['npred_fixed']],free=False,
             pars = fa.allnorm + fa.allidx)
+    if freezesupexp:
+        logging.info("Freezing Index2 for all sources")
+        gta.free_sources(pars = ['Index2'], free = False)
     gta.print_roi()
+    print_free_sources(gta)
     return gta
 
 def set_lc_bin(tmin, tmax, dt,n, ft1 = 'None'):
@@ -94,7 +201,7 @@ def set_lc_bin(tmin, tmax, dt,n, ft1 = 'None'):
         start time of full interval in seconds
     tmax: float
         end time of full interval in seconds
-    dt: float or str
+    dt: int, float or str
         length of time interval in seconds, if str, use GTI as time intervals
     n: int
         number of time interval, starts at 0
@@ -108,7 +215,7 @@ def set_lc_bin(tmin, tmax, dt,n, ft1 = 'None'):
     -------
     tuple containing start and end time of n-th interval as well as total number of intervals
     """
-    if type(dt) == float:
+    if type(dt) == float or type(dt) == int:
         nint = int(np.floor((float(tmax) - float(tmin)) / float(dt)))
         tmin_new = tmin + n * dt
         tmax_new = tmin + (n + 1) * dt
@@ -148,11 +255,13 @@ def set_lc_bin(tmin, tmax, dt,n, ft1 = 'None'):
 def print_free_sources(gta):
     """Print the free source parameters"""
     logging.info('free source parameters:')
+    nfree = 0
     for s in  gta.get_sources() :                                                           
         for k in s.spectral_pars.keys():
             if s.spectral_pars[k]['free']:   
                 logging.info('{0:s}: {1:s}'.format(s.name, k))
-    return 
+                nfree += 1
+    return nfree
 
 def refit(gta, src, f, tsfix):
     """
@@ -272,6 +381,94 @@ def set_src_spec_pl(gta, src):
     logging.info('New source parameters are: {0}'.format(gta.roi.get_source_by_name(src).spectral_pars))
     return gta
 
+def set_src_spec_plexpcut(gta, src):
+    """
+    Set an arbitrary source spectrum to a power law
+    with exponential cut off 
+
+    Parameters
+    ----------
+    gta: `~fermipy.gtanalysis`
+        fermipy analysis object
+
+    src: string
+        source name
+    """
+    m = gta.roi.get_source_by_name(src)
+
+    if m['SpectrumType'] == 'LogParabola':
+        e0 = m['spectral_pars']['Eb']['value']
+    else:
+        try:
+            e0 = m['spectral_pars']['Scale']['value']
+        except KeyError:
+            logging.warning("Did not find 'Scale' in spectral pars, using pivot energy for E0")
+            e0 = gta.get_src_model(src)['pivot_energy']
+
+    loge = np.sort(gta.log_energies)
+    logecen = 0.5 * (loge[1:] + loge[:-1])
+    # get the source flux
+    flux = []
+    for i,le in enumerate(loge[:-1]):
+        flux.append(gta.like[src].flux(10.**le,10.**loge[i+1]))
+    # get the power-law index
+    flux = np.array(flux)
+    flux[flux <= 0.] = 1e-40 * np.ones(np.sum(flux <= 0.))
+    maskcen = 10.**logecen <= e0
+    mask = 10.**loge <= e0
+
+    r = linregress(logecen[maskcen],np.log10(flux[maskcen]))
+    if -1. * r.slope < 0. or -1. * r.slope > 5.:
+        slope = -2.
+    else:
+        slope = r.slope
+
+    prefactor = gta.like[src].flux(10.**loge[mask].min(),10.**loge[mask].max())
+    # compute the normalization so that integrated 
+    # flux is the same
+    if slope == -1.:
+        prefactor /= (e0 * (loge[mask].max() - loge[mask].min()))
+        prefactor *= np.log(10.)
+    else:
+        gp1 = 1. + slope
+        prefactor *=  gp1 * e0**slope
+        prefactor /= (10.**(gp1 * loge[mask].max()) - 10.**(gp1 * loge[mask].min()))
+
+    prefactor_scale = np.floor(np.log10(prefactor))
+    # change the source spectrum
+    pars = {}
+    pars['Index1'] =  dict(error= np.nan, 
+                            free = True, 
+                            max= 5.0, min= 0.0, 
+                            name= 'Index', scale= -1.0,
+                            value= slope * -1.)
+    pars['Prefactor'] = dict(error= np.nan,
+                            free= True,
+                            max= prefactor * 1e5 / 10.**prefactor_scale,
+                            min= prefactor * 1.0e-05 / 10.**prefactor_scale,
+                            name= 'Prefactor',scale= 10.**prefactor_scale,
+                            value= prefactor / 10.**prefactor_scale)
+    pars['Scale'] = dict(error= np.nan,
+                        free= False,
+                        max= 1000.0, min= 0.001,
+                        name= 'Scale', scale= 1.0,
+                        value= e0)
+    pars['Cutoff'] = dict(error= np.nan,
+                        free= False,
+                        max= 1e+5, min= 1.0,
+                        name= 'Cutoff', scale= 1.0,
+                        value= e0 * 2.)
+    pars['Index2'] =  dict(error= np.nan, 
+                            free = True, 
+                            max= 2.0, min= 0.0, 
+                            name= 'Index2', scale= 1.0,
+                            value= 1.)
+
+    gta.set_source_spectrum(src,spectrum_type = 'PLSuperExpCutoff', spectrum_pars= pars)
+    logging.info('Changed spectrum of {0:s} to PLSuperExpCutoff'.format(src))
+    logging.info('New source parameters are: {0}'.format(gta.roi.get_source_by_name(src).spectral_pars))
+    return gta
+
 def add_ebl_atten(gta, src, z, eblmodel = 'dominguez', force_lp= False):
     """
     Change the source model of a source to include EBL attenuation
@@ -303,17 +500,8 @@ def add_ebl_atten(gta, src, z, eblmodel = 'dominguez', force_lp= False):
     if not eblmodel in ebl_st_model_list:
         raise ValueError("Unknown EBL model chosen. Availbale models are {0}".format(ebl_st_model_list))
 
-    if force_lp or m['SpectrumType'] == 'PLSuperExpCutoff': # bug in src maps for latter model
+    if force_lp: # bug in src maps for latter model
         new_spec = 'EblAtten::{0:s}'.format('LogParabola')
-        if m['SpectrumType'] == 'PLSuperExpCutoff':
-            new_spec_dict = {}
-            new_spec_dict['norm'] = m.spectral_pars['Prefactor']
-            new_spec_dict['alpha'] = m.spectral_pars['Index1']
-            if new_spec_dict['alpha']['scale'] < 0.:
-                new_spec_dict['alpha']['scale'] *= -1.
-            new_spec_dict['Eb'] = m.spectral_pars['Scale']
-            new_spec_dict['beta'] = dict(free=1, max=5., min=0.,
-                                name="beta", scale=1.0, value=0.1)
     else:
         new_spec = 'EblAtten::{0:s}'.format(m['SpectrumType'])
         new_spec_dict = m.spectral_pars
@@ -326,12 +514,13 @@ def add_ebl_atten(gta, src, z, eblmodel = 'dominguez', force_lp= False):
         new_spec_dict['Integral'] = dict(free = True, value = val, min = val *1e-5, max = val * 1e5)
         for p in ['Scale','Prefactor']:
             new_spec_dict.pop(p,None)
-        print new_spec_dict
 
+    logging.info("Using EBL model {0:s} with ST id {1:n}".format(
+        eblmodel, ebl_st_model_list.index(eblmodel)))
     new_spec_dict['ebl_model'] = dict(
             error = np.nan, 
             free =  False, 
-            #max = 3.4028234663852886e+38, min = -3.4028234663852886e+38,
+            min = 0, max = len(ebl_st_model_list),
             name = 'ebl_model', scale = 1.0,
             value= ebl_st_model_list.index(eblmodel))
     new_spec_dict['redshift'] = dict(
@@ -346,6 +535,8 @@ def add_ebl_atten(gta, src, z, eblmodel = 'dominguez', force_lp= False):
             max = 2., min = 0.,
             name = 'tau_norm', scale = 1.0,
             value= 1.)
+    logging.info('Changing spectrum of {0:s} to {1:s}...'.format(src, new_spec))
+    logging.info('Dictionary: {0}'.format(new_spec_dict))
     gta.set_source_spectrum(src,spectrum_type=new_spec, spectrum_pars= new_spec_dict)
     logging.info('Changed spectrum of {0:s} to {1:s}'.format(src, new_spec))
     logging.info('New source parameters are: {0}'.format(gta.roi.get_source_by_name(src).spectral_pars))
@@ -371,9 +562,15 @@ def collect_lc_results(outfiles, hdu = "CATALOG"):
             tmax.append(c['selection']['tmax'])
             emin.append(c['selection']['emin'])
             emax.append(c['selection']['emax'])
-            param_names.append(f[hdu].data['param_names'][s])
-            param_values.append(f[hdu].data['param_values'][s])
-            param_errors.append(f[hdu].data['param_errors'][s])
+            param_names.append(np.squeeze(f[hdu].data['param_names'][s]))
+            param_values.append(np.squeeze(f[hdu].data['param_values'][s]))
+            param_errors.append(np.squeeze(f[hdu].data['param_errors'][s]))
+            npred.append(np.squeeze(f[hdu].data['npred'][s]))
+            ts.append(np.squeeze(f[hdu].data['npred'][s]))
+            eflux_err.append(np.squeeze(f[hdu].data['eflux_err'][s]))
+            eflux.append(np.squeeze(f[hdu].data['eflux'][s]))
+            flux_err.append(np.squeeze(f[hdu].data['flux_err'][s]))
+            flux.append(np.squeeze(f[hdu].data['flux'][s]))
 
             
         if hdu == 'LIGHTCURVE':
@@ -389,36 +586,52 @@ def collect_lc_results(outfiles, hdu = "CATALOG"):
                 emin = np.concatenate([emin, np.zeros_like(f[hdu].data['tmin'][s])])
                 emax = np.concatenate([emax, np.zeros_like(f[hdu].data['tmin'][s])])
 
-        if not i:
-            npred = f[hdu].data['npred'][s]
-            ts = f[hdu].data['npred'][s]
-            eflux_err = f[hdu].data['eflux_err'][s]
-            eflux = f[hdu].data['eflux'][s]
-            flux_err = f[hdu].data['flux_err'][s]
-            flux = f[hdu].data['flux'][s]
-            param_names = f[hdu].data['param_names'][s]
-            param_values = f[hdu].data['param_values'][s]
-            param_errors = f[hdu].data['param_errors'][s]
-        else:
-            npred = np.concatenate([npred, f[hdu].data['npred'][s]])
-            ts = np.concatenate([ts, f[hdu].data['ts'][s]])
-            eflux_err = np.concatenate([eflux_err, f[hdu].data['eflux_err'][s]])
-            eflux = np.concatenate([eflux, f[hdu].data['eflux'][s]])
-            flux_err = np.concatenate([flux_err, f[hdu].data['flux_err'][s]])
-            flux = np.concatenate([flux, f[hdu].data['flux'][s]])
-            param_names = np.vstack([param_names,f[hdu].data['param_names'][s]])
-            param_values = np.vstack([param_values,f[hdu].data['param_values'][s]])
-            param_errors = np.vstack([param_errors,f[hdu].data['param_errors'][s]])
-
+            if not i:
+                npred = f[hdu].data['npred'][s]
+                eflux_err = f[hdu].data['eflux_err'][s]
+                ts = f[hdu].data['ts'][s]
+                eflux = f[hdu].data['eflux'][s]
+                flux_err = f[hdu].data['flux_err'][s]
+                flux = f[hdu].data['flux'][s]
+                param_names = f[hdu].data['param_names'][s]
+                param_values = f[hdu].data['param_values'][s]
+                param_errors = f[hdu].data['param_errors'][s]
+                if 'flux_fixed' in f[hdu].columns.names:
+                    ts_fixed = f[hdu].data['ts_fixed'][s]
+                    flux_fixed = f[hdu].data['flux_fixed'][s]
+                    flux_err_fixed = f[hdu].data['flux_err_fixed'][s]
+                    eflux_err_fixed = f[hdu].data['eflux_err_fixed'][s]
+                    eflux_fixed = f[hdu].data['eflux_fixed'][s]
+            else:
+                npred = np.concatenate([npred, f[hdu].data['npred'][s]])
+                ts = np.concatenate([ts, f[hdu].data['ts'][s]])
+                eflux_err = np.concatenate([eflux_err, f[hdu].data['eflux_err'][s]])
+                eflux = np.concatenate([eflux, f[hdu].data['eflux'][s]])
+                flux_err = np.concatenate([flux_err, f[hdu].data['flux_err'][s]])
+                flux = np.concatenate([flux, f[hdu].data['flux'][s]])
+                param_names = np.vstack([param_names,f[hdu].data['param_names'][s]])
+                param_values = np.vstack([param_values,f[hdu].data['param_values'][s]])
+                param_errors = np.vstack([param_errors,f[hdu].data['param_errors'][s]])
+                if 'flux_fixed' in f[hdu].columns.names:
+                    eflux_err_fixed = np.concatenate([eflux_err_fixed, f[hdu].data['eflux_err_fixed'][s]])
+                    eflux_fixed = np.concatenate([eflux_fixed, f[hdu].data['eflux_fixed'][s]])
+                    flux_err_fixed = np.concatenate([flux_err_fixed, f[hdu].data['flux_err_fixed'][s]])
+                    flux_fixed = np.concatenate([flux_fixed, f[hdu].data['flux_fixed'][s]])
+                    ts_fixed = np.concatenate([ts_fixed, f[hdu].data['ts_fixed'][s]])
 
     tmin = np.squeeze(met_to_mjd(np.array(tmin)))
     tmax = np.squeeze(met_to_mjd(np.array(tmax)))
 
+    data = [tmin, tmax, emin, emax, ts, npred, eflux, eflux_err,
+                flux, flux_err, param_names, param_values, param_errors]
+    names = ['tmin', 'tmax', 'emin', 'emax', 'ts', 'npred', 'eflux', 'eflux_err', 
+                    'flux', 'flux_err', 'param_names', 'param_values', 'param_errors']
 
-    t = Table([tmin, tmax, emin, emax, ts, npred, eflux, eflux_err,
-                flux, flux_err, param_names, param_values, param_errors],
-                    names = ('tmin', 'tmax', 'emin', 'emax', 'ts', 'npred', 'eflux', 'eflux_err', 
-                    'flux', 'flux_err', 'param_names', 'param_values', 'param_errors'))
+    if 'flux_fixed' in f[hdu].columns.names:
+        data += [eflux_fixed, eflux_err_fixed, flux_fixed, flux_err_fixed, ts_fixed]
+        names += ['eflux_fixed', 'eflux_err_fixed', 'flux_fixed', 'flux_err_fixed', 'ts_fixed']
+
+    t = Table(data,names = names)
     t['tmin'].unit = 'MJD'
     t['tmax'].unit = 'MJD'
     t['emin'].unit = 'MeV'
