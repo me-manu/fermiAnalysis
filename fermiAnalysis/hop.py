@@ -138,9 +138,9 @@ def plot_sheds(xmin, xmax, y, id_sheds, bbf = None,
     xmax: `~numpy.ndarray`
         right bin bounds of x values 
     
-    xref: `~numpy.ndarray`
-        central x value of data bins 
-    
+    id_sheds: `~numpy.ndarray`
+	id vector from hop algorithm
+
     y: `~numpy.ndarray`
         y value of data points / of BB
        
