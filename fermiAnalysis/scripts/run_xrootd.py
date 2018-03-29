@@ -15,14 +15,16 @@ if __name__ == '__main__':
     description = "Run the analysis"
     parser = argparse.ArgumentParser(usage=usage,description=description)
     parser.add_argument('-c', '--conf', required = True)
-    parser.add_argument('-i', required=False, default = 0) 
+    parser.add_argument('-i', required=False, default = 0, type = int)
     args = parser.parse_args()
 
     gta, config, fit_config, job_id  = setup.init_gta(args.conf, i = args.i, logging_level = "INFO")
 
     # start analysis
     xrd = xrootd.XrootdSelect()
-    gta.config['selection']['infile'] = '@' + xrd.flist
+    gta.config['selection']['infile'] = '@' + xrd.create_shortlist(gta.config['selection']['tmin'], 
+                                                                    gta.config['selection']['tmax'],
+                                                                    gta.workdir)
     gta.config['selection']['rad'] = gta.config['binning']['roiwidth']
     gta.config['selection']['outfile'] = gta.config['data']['evfile']
 

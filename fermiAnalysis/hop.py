@@ -126,7 +126,7 @@ def data_in_sheds(bbf,xmin, xmax, xref, y, id_sheds, yerr = None):
 
 def plot_sheds(xmin, xmax, y, id_sheds, bbf = None, 
                col = [plt.cm.tab10(0.8),plt.cm.tab10(1.0)],
-               hatch = ['////','\\\\\\\\'], exp = 0.):
+               hatch = ['////','\\\\\\\\'], exp = 0., **kwargs):
     """
     Plot the sheds of flares
     
@@ -165,7 +165,7 @@ def plot_sheds(xmin, xmax, y, id_sheds, bbf = None,
         plt.fill_between(x,f,
                      edgecolor = col[ip % len(col)], hatch = hatch[ip % len(hatch)],
                      facecolor = 'none',
-                     step = 'post')
+                     step = 'post', **kwargs)
     return
 
 def estimate_time(f,dt,fpeak):

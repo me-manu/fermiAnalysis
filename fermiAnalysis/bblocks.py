@@ -39,7 +39,7 @@ def binblock_unbinned(times, exp = np.array([]), p0 = 0.05, itr = 1):
     return np.concatenate([times[:-1][bb], [times[-1]]])
 
 def binbblock (widths, counts, p0=0.05, itr = 1, datatype = 'unbinned',
-                errs = np.array([]), exp = np.array([])):
+                errs = np.array([]), exp = np.array([]), return_davg = False):
     """
     Calculate Bayesian blocks 
     
@@ -57,7 +57,7 @@ def binbblock (widths, counts, p0=0.05, itr = 1, datatype = 'unbinned',
         type of histogram
     errs: `~numpy.ndarray`
         if datatype = point, gives measurement error in each bin
-    errs: `~numpy.ndarray`
+    exp: `~numpy.ndarray`
         Gives exposure in each bin / for each event
     p0: float
         false alarm probability for new change point, 
@@ -65,6 +65,10 @@ def binbblock (widths, counts, p0=0.05, itr = 1, datatype = 'unbinned',
     itr: int
         number of iterations, each iteration changes 
         p0 to p0^1/(number of change points)
+    return_davg: bool
+        if true and datatype == point,
+        also return the uncertainty in the average flux
+        (default: false)
     
     Returns
     -------
@@ -180,6 +184,8 @@ def binbblock (widths, counts, p0=0.05, itr = 1, datatype = 'unbinned',
     rcounts = np.empty (nblocks, dtype=np.int)
     rwidths = np.empty (nblocks)
     avg = np.empty (nblocks)
+    if datatype == 'point':
+        davg = np.empty (nblocks)
     
     for iblk in xrange (nblocks):
         cellstart = blockstarts[iblk]
@@ -191,10 +197,15 @@ def binbblock (widths, counts, p0=0.05, itr = 1, datatype = 'unbinned',
         rwidths[iblk] = widths[cellstart:cellend+1].sum ()
         rcounts[iblk] = counts[cellstart:cellend+1].sum ()
         avg[iblk] = counts[cellstart:cellend+1].sum () / (cellend + 1 - cellstart)
+        if datatype == 'point':
+            davg[iblk] = np.sqrt((errs[cellstart:cellend+1] ** 2.).sum ()) / (cellend + 1 - cellstart)
 
     rates = rcounts / rwidths
     
-    return blockstarts, avg
+    if return_davg and datatype == 'point':
+        return blockstarts, avg, davg
+    else:
+        return blockstarts, avg
 
 # ----- an alternative implementation ------------------------ #
 def bayesian_blocks(t, p0 = 0.05, exp = np.array([])):

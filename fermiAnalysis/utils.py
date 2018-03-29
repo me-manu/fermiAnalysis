@@ -542,7 +542,7 @@ def add_ebl_atten(gta, src, z, eblmodel = 'dominguez', force_lp= False):
     logging.info('New source parameters are: {0}'.format(gta.roi.get_source_by_name(src).spectral_pars))
     return gta
 
-def collect_lc_results(outfiles, hdu = "CATALOG"):
+def collect_lc_results(outfiles, hdu = "CATALOG", createsedlc = False):
     ff = glob(outfiles)
     ff = sorted(ff, key = lambda f: int(path.dirname(f).split('/')[-1]))
     logging.debug('collecting results from {0:n} files'.format(len(ff)))
@@ -550,12 +550,42 @@ def collect_lc_results(outfiles, hdu = "CATALOG"):
     emin, emax = [],[]
     npred,ts,eflux,eflux_err,flux,flux_err = [],[],[],[],[],[]
     param_names, param_values, param_errors = [],[],[]
+    if createsedlc: 
+        emin_sed = []
+        emax_sed = []
+        eref_sed = []
+        norm_scan_sed = []
+        dloglike_scan_sed = []
+        dnde_sed = []
+        dnde_ul_sed = []
+        norm_ul_sed = []
+        dnde_errp_sed = []
+        dnde_errn_sed = []
+
     for i,fi in enumerate(ff):
         logging.debug('Opening {0:s}'.format(fi))
         f = fits.open(fi)
         if hdu == 'CATALOG':
             idx = np.argmin(f[hdu].data['offset']) # index of central source
             s = slice(idx,idx+1)
+
+            if createsedlc: 
+                fsed = glob(path.join(path.dirname(fi), 'lc_sed*.fits'))
+                if not len(fsed):
+                    logging.warning("No SED file in {0:s}".format(path.join(path.dirname(fi), 'lc_sed*.fits')))
+                    continue
+# TODO implement for arbirtrary number of energy bins
+                tsed = Table.read(fsed[0])
+                emin_sed.append(tsed['e_min'])
+                emax_sed.append(tsed['e_max'])
+                eref_sed.append(tsed['e_ref'])
+                norm_scan_sed.append(tsed['norm_scan'])
+                dloglike_scan_sed.append(tsed['dloglike_scan'])
+                dnde_sed.append(tsed['dnde'])
+                dnde_ul_sed.append(tsed['dnde_ul'])
+                norm_ul_sed.append(tsed['norm_ul'])
+                dnde_errp_sed.append(tsed['dnde_errp'])
+                dnde_errn_sed.append(tsed['dnde_errn'])
 
             c = yaml.load(f[0].header['CONFIG'])
             tmin.append(c['selection']['tmin'])
@@ -571,6 +601,7 @@ def collect_lc_results(outfiles, hdu = "CATALOG"):
             eflux.append(np.squeeze(f[hdu].data['eflux'][s]))
             flux_err.append(np.squeeze(f[hdu].data['flux_err'][s]))
             flux.append(np.squeeze(f[hdu].data['flux'][s]))
+
 
             
         if hdu == 'LIGHTCURVE':
@@ -630,6 +661,10 @@ def collect_lc_results(outfiles, hdu = "CATALOG"):
     if 'flux_fixed' in f[hdu].columns.names:
         data += [eflux_fixed, eflux_err_fixed, flux_fixed, flux_err_fixed, ts_fixed]
         names += ['eflux_fixed', 'eflux_err_fixed', 'flux_fixed', 'flux_err_fixed', 'ts_fixed']
+
+    if createsedlc:
+        data += [emin_sed,emax_sed,eref_sed,norm_scan_sed,dloglike_scan_sed,dnde_sed,dnde_ul_sed,norm_ul_sed,dnde_errp_sed,dnde_errn_sed]
+        names += ['emin_sed','emax_sed','eref_sed','norm_scan_sed','dloglike_scan_sed','dnde_sed','dnde_ul_sed','norm_ul_sed','dnde_errp_sed','dnde_errn_sed']
 
     t = Table(data,names = names)
     t['tmin'].unit = 'MJD'

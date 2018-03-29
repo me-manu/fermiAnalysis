@@ -64,6 +64,12 @@ def main():
     parser.add_argument('--forcepl', default = 0,  
                         help='Force the target source to have power-law shape',
                         type=int)
+    parser.add_argument('--createsed', default = 0,  
+                        help='Create SED from best fit model',
+                        type=int)
+    parser.add_argument('--mincounts', default = 2,  
+                        help='Minimum number of counts within LC bin to run analysis',
+                        type=int)
     args = parser.parse_args()
 
     utils.init_logging('DEBUG')
@@ -129,7 +135,17 @@ def main():
                                         config['lightcurve']['binsz']))
         else:
             config['lightcurve']['binsz'] = 3. * 3600.
-    gta = GTAnalysis(config,logging={'verbosity' : 3})
+    try:
+        gta = GTAnalysis(config,logging={'verbosity' : 3})
+    except Exception as e:
+        logging.error("{0}".format(e))
+        config['selection']['target'] = None
+        gta = GTAnalysis(config,logging={'verbosity' : 3})
+        sep = gta.roi.sources[0]['offset'] 
+        logging.warning("Source closets to ROI center is {0:.3f} degree away".format(sep))
+        if sep < 0.1:
+            config['selection']['target'] = gta.roi.sources[0]['name']
+            logging.info("Set target to {0:s}".format(config['selection']['target']))
 
     # stage the full time array analysis results to the tmp dir
     # do not copy png images
@@ -145,9 +161,9 @@ def main():
                     hdu = 'EVENTS')
     logging.info("times in base ft1: {0} {1} {2}".format(t["TIME"].max(), t["TIME"].min(), t["TIME"].max() - t["TIME"].min()))
     m = (t["TIME"] >= config['selection']['tmin']) & (t["TIME"] <= config['selection']['tmax'])
-    if np.sum(m) < 4:
-        logging.error("*** Only 3 events between tmin and tmax! Exiting")
-        assert np.sum(m) > 3
+    if np.sum(m) < args.mincounts + 1:
+        logging.error("*** Only {0:n} events between tmin and tmax! Exiting".format(np.sum(m)))
+        assert np.sum(m) > args.mincounts
     else:
         logging.info("{0:n} events between tmin and tmax".format(np.sum(m)))
 
@@ -166,16 +182,25 @@ def main():
         #bins = np.arange(config['selection']['tmin'],
                         #config['selection']['tmax'],
                         #config['lightcurve']['binsz'])
-        #bins = np.concatenate([bins, [config['selection']['tmax']]])
         bins = np.arange(tmin,tmax,config['lightcurve']['binsz'])
-        bins = np.concatenate([bins, [tmax]])
+        bins = np.concatenate([bins, [config['selection']['tmax']]])
         counts = calc_counts(t,bins)
         # remove the starting times of the bins with zero counts
         # and rebin the data
         logging.info("Counts before rebinning: {0}".format(counts))
         mincounts = 10.
-        m = counts < mincounts
-        if np.sum(m):
+        mc = counts < mincounts
+        if np.sum(mc):
+            # remove trailing zeros
+            if np.any(counts == 0.):
+                mcounts_pre = np.cumsum(counts) > 4.
+                mcounts_post = np.cumsum(counts[::-1])[::-1] > 4.
+                if not np.sum(mcounts_post & mcounts_pre):
+                    logging.error("*** After removing trailing bins with less than 4 counts, no bins left! Exiting")
+                    raise Exception
+                counts = counts[mcounts_post & mcounts_pre]
+                bins = np.concatenate([bins[:-1][mcounts_post & mcounts_pre],
+                    [bins[1:][mcounts_post & mcounts_pre].max()]])
             bins = rebin(counts, bins)
             logging.info("Bin lengths after rebinning: {0}".format(np.diff(bins)))
             logging.info("Bin times after rebinning: {0}".format(bins))
@@ -186,8 +211,6 @@ def main():
             #bins = None
             logging.info("Regular time binning will be used")
         bins = list(bins)
-
-
 
     logging.info('Running fermipy setup')
     try:
@@ -275,6 +298,21 @@ def main():
         gta, f = refit(gta, config['selection']['target'],f, fit_config['ts_fixed'])
         gta.print_roi()
         gta.write_roi('lc')
+
+        if args.createsed:
+            gta.load_roi('lc') # reload the average spectral fit
+            logging.info('Running sed for {0[target]:s}'.format(config['selection']))
+            sed = gta.sed(config['selection']['target'],
+                        prefix = 'lc_sed',
+                        #outfile = 'sed.fits',
+                        #free_radius = sed_config['free_radius'],
+                        #free_background= sed_config['free_background'],
+                        free_pars = fa.allnorm
+                        #make_plots = sed_config['make_plots'],
+                        #cov_scale = sed_config['cov_scale'],
+                        #use_local_index = sed_config['use_local_index'],
+                        #bin_index = sed_config['bin_index']
+                        )
 
     # debugging: calculate sed and resid maps for each light curve bin
     #logging.info('Running sed for {0[target]:s}'.format(config['selection']))
