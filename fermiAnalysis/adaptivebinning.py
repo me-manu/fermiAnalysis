@@ -30,6 +30,7 @@ def comp_E1(gta):
     l = src['glon']
     b = src['glat']
     initialize_TS(macropath)  
+    logging.error("{0}".format([flux,index, l, b, emin, emax]))
     return get_E1(flux,index, l, b, emin, emax)
 
 def comp_exposure_phi(gta, energy = None):
@@ -207,7 +208,7 @@ def Get_flux_unc(index,glon,glat,tstart,tstop,
                 tstart,tstop,nevt,
                 normeg,normgal,indexgal,El)
 
-    logging.debug("{0}".format(ff, unc))
+    logging.debug("{0} {1}".format(ff, unc))
     return ff,unc
 
 
@@ -260,8 +261,9 @@ def time_bins(gta, tcen, exp,
         Epivot = comp_E1(gta)
         logging.info("Epivot = {0} MeV".format(Epivot))
         if np.isnan(Epivot):
-            logging.error("Epivot is nan, using min energy instead!")
-        Epivot = gta.config['selection']['emin']
+            Epivot = np.max([300.,gta.config['selection']['emin']])
+            logging.error("Epivot is nan, " \
+                    "using {0:.2f} MeV instead!".format(Epivot))
 
     if type(sources) == type(None):
         src = gta.roi[gta.config['selection']['target']]
@@ -295,10 +297,12 @@ def time_bins(gta, tcen, exp,
 
             glon_all.append(c[-1].galactic.l.value)
             glat_all.append(c[-1].galactic.b.value)
+
         flux = array('d',flux)
         index = array('d',index)
     else:
         raise Exception("sources keyword not understood")
+
 
     logging.info("Source properties: glon = {0}, glat = {1}, flux = {2}, index = {3}".format(
                     glon_all, glat_all, flux, index))
@@ -392,7 +396,7 @@ def time_bins(gta, tcen, exp,
                 else:    
                     iav=0
                     tstop=(tmin+tmax)/2.
-                    logging.debug(tmin,uncmin,tmax,uncmax)
+                    logging.debug("{0}".format([tmin,uncmin,tmax,uncmax]))
                     logging.info("in patch iav")
                 logging.info("tstop {0} {1}".format(tstop, ff))
                 if (tstop<0):

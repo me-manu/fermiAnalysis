@@ -9,12 +9,14 @@ import logging
 from haloanalysis.batchfarm import utils,lsf
 import fermiAnalysis as fa
 from fermiAnalysis.utils import * 
+from fermiAnalysis import adaptivebinning as ab
 import argparse
 import yaml
 import os
 import copy
 import numpy as np
 from glob import glob
+from fermiAnalysis.prepare import PreparePointSource 
 
 def rebin(c,b,minc = 10):
     """
@@ -67,6 +69,13 @@ def main():
     parser.add_argument('--createsed', default = 0,  
                         help='Create SED from best fit model',
                         type=int)
+    parser.add_argument('--adaptive', default = 0,  
+                        help='Use adaptive binning for minute scale light curves',
+                        type=int)
+    parser.add_argument('--srcprob', default = 0,  
+                        help='Calculate the source probability for the photons,' \
+                            ' only works when no sub orbit time scales are used',
+                        type=int)
     parser.add_argument('--mincounts', default = 2,  
                         help='Minimum number of counts within LC bin to run analysis',
                         type=int)
@@ -116,6 +125,8 @@ def main():
         '{0:n}, between {1[tmin]:.0f} and {1[tmax]:.0f}'.format(job_id, config['selection']))
     config['fileio']['outdir'] = utils.mkdir(path.join(config['fileio']['outdir'],
                         '{0:05n}/'.format(job_id if job_id > 0 else 1)))
+    if args.adaptive:
+        config['fileio']['outdir'] = utils.mkdir(path.join(config['fileio']['outdir'],'adaptive/'))
 
     logging.info('Starting with fermipy analysis')
     logging.info('using fermipy version {0:s}'.format(fermipy.__version__))
@@ -169,48 +180,45 @@ def main():
 
     # check how many bins are in each potential light curve bin
     if compute_sub_gti_lc:
+        if not args.adaptive:
 # select time of first and last 
 # photon instead of GTI time
-        m = (t["TIME"] >= config['selection']['tmin']) & \
-             (t["TIME"] <= config['selection']['tmax'])
+            m = (t["TIME"] >= config['selection']['tmin']) & \
+                 (t["TIME"] <= config['selection']['tmax'])
 
-        tmin = t["TIME"][m].min() - 1.
-        tmax = t["TIME"][m].max() + 1.
-        logging.info("There will be up to {0:n} time bins".format(np.ceil(
-            (tmax - tmin) / \
-            config['lightcurve']['binsz'])))
-        #bins = np.arange(config['selection']['tmin'],
-                        #config['selection']['tmax'],
-                        #config['lightcurve']['binsz'])
-        bins = np.arange(tmin,tmax,config['lightcurve']['binsz'])
-        bins = np.concatenate([bins, [config['selection']['tmax']]])
-        counts = calc_counts(t,bins)
-        # remove the starting times of the bins with zero counts
-        # and rebin the data
-        logging.info("Counts before rebinning: {0}".format(counts))
-        mincounts = 10.
-        mc = counts < mincounts
-        if np.sum(mc):
-            # remove trailing zeros
-            if np.any(counts == 0.):
-                mcounts_pre = np.cumsum(counts) > 4.
-                mcounts_post = np.cumsum(counts[::-1])[::-1] > 4.
-                if not np.sum(mcounts_post & mcounts_pre):
-                    logging.error("*** After removing trailing bins with less than 4 counts, no bins left! Exiting")
-                    raise Exception
-                counts = counts[mcounts_post & mcounts_pre]
-                bins = np.concatenate([bins[:-1][mcounts_post & mcounts_pre],
-                    [bins[1:][mcounts_post & mcounts_pre].max()]])
-            bins = rebin(counts, bins)
-            logging.info("Bin lengths after rebinning: {0}".format(np.diff(bins)))
-            logging.info("Bin times after rebinning: {0}".format(bins))
-            counts = calc_counts(t, bins)
-            logging.info("Counts after rebinning: {0}".format(counts))
-            #bins = list(bins)
-        else:
-            #bins = None
-            logging.info("Regular time binning will be used")
-        bins = list(bins)
+            tmin = t["TIME"][m].min() - 1.
+            tmax = t["TIME"][m].max() + 1.
+            logging.info("There will be up to {0:n} time bins".format(np.ceil(
+                (tmax - tmin) / \
+                config['lightcurve']['binsz'])))
+
+            bins = np.arange(tmin,tmax,config['lightcurve']['binsz'])
+            bins = np.concatenate([bins, [config['selection']['tmax']]])
+            counts = calc_counts(t,bins)
+            # remove the starting times of the bins with zero counts
+            # and rebin the data
+            logging.info("Counts before rebinning: {0}".format(counts))
+            mincounts = 10.
+            mc = counts < mincounts
+            if np.sum(mc):
+                # remove trailing zeros
+                if np.any(counts == 0.):
+                    mcounts_pre = np.cumsum(counts) > 4.
+                    mcounts_post = np.cumsum(counts[::-1])[::-1] > 4.
+                    if not np.sum(mcounts_post & mcounts_pre):
+                        logging.error("*** After removing trailing bins with less than 4 counts, no bins left! Exiting")
+                        raise Exception
+                    counts = counts[mcounts_post & mcounts_pre]
+                    bins = np.concatenate([bins[:-1][mcounts_post & mcounts_pre],
+                        [bins[1:][mcounts_post & mcounts_pre].max()]])
+                bins = rebin(counts, bins)
+                logging.info("Bin lengths after rebinning: {0}".format(np.diff(bins)))
+                logging.info("Bin times after rebinning: {0}".format(bins))
+                counts = calc_counts(t, bins)
+                logging.info("Counts after rebinning: {0}".format(counts))
+            else:
+                logging.info("Regular time binning will be used")
+            bins = list(bins)
 
     logging.info('Running fermipy setup')
     try:
@@ -244,7 +252,43 @@ def main():
         gta = set_src_spec_pl(gta, gta.get_source_name(config['selection']['target']))
 # to do add EBL absorption at some stage ...
 #        gta = add_ebl_atten(gta, gta.get_source_name(config['selection']['target']), fit_config['z'])
+
     if compute_sub_gti_lc:
+        if args.adaptive:
+             # compute the exposure
+            energy = 1000.
+            texp, front, back = ab.comp_exposure_phi(gta, energy = 1000.)
+            # compute the bins
+            result = ab.time_bins(gta, texp,
+                                    0.5 * (front + back), 
+                                    critval = 20., # bins with ~20% unc
+                                    Epivot = None, # compute on the fly
+            #                        tstart = config['selection']['tmin'],
+            #                        tstop = config['selection']['tmax']
+                                    )
+
+            # cut the bins to this GTI
+            mask = result['tstop'] > config['selection']['tmin']
+            mask = mask & (result['tstart'] < config['selection']['tmax'])
+            bins = np.concatenate((result['tstart'][mask], [result['tstop'][mask][-1]]))
+            bins[0] = np.max([config['selection']['tmin'], bins[0]])
+            bins[-1] = np.min([config['selection']['tmax'], bins[-1]])
+            bins = list(bins)
+            logging.info("Using bins {0}, total n={1:n} bins".format(bins, len(bins)-1))
+            logging.info("bins widths : {0}".format(np.diff(bins)))
+            logging.info("counts per bin: {0} ".format(calc_counts(t,bins)))
+
+
+            t = Table(result)
+            tfile = path.join(gta.workdir, 'time_bins.fits')
+            t.write(tfile, overwrite = True)
+
+            exp = Table(dict(time = texp, front = front, back = back))
+            expfile = path.join(gta.workdir, 'exposure_{0:n}MeV.fits'.format(energy))
+            exp.write(expfile, overwrite = True)
+
+            utils.copy2scratch([tfile, expfile], config['fileio']['outdir'])
+# TODO: test that this is working also with GTIs that have little or no counts
 
         lc = gta.lightcurve(config['selection']['target'],
                                 binsz = config['lightcurve']['binsz'],
@@ -319,6 +363,22 @@ def main():
     #sed = gta.sed(config['selection']['target'], prefix = 'lc')
     #model = {'Scale': 1000., 'Index' : fit_config['new_src_pl_index'], 'SpatialModel' : 'PointSource'}
     #resid_maps = gta.residmap('lc',model=model, make_plots=True, write_fits = True, write_npy = True)
+
+        if args.srcprob:
+            pps = PreparePointSource(config,logging={'verbosity' : 3})
+            logging.info("Running srcprob with srcmdl {0:s}".format(args.srcmdl))
+            pps._compute_srcprob('lc',
+                overwrite = args.overwrite)
+
+            # compute the exposure
+            energy = 1000.
+            texp, front, back = ab.comp_exposure_phi(gta, energy = 1000.)
+
+            exp = Table(dict(time = texp, front = front, back = back))
+            expfile = path.join(gta.workdir, 'exposure_{0:n}MeV.fits'.format(energy))
+            exp.write(expfile)
+
+            utils.copy2scratch(expfile, config['fileio']['outdir'])
     return gta 
 
 if __name__ == '__main__':
