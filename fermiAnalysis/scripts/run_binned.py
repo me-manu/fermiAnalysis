@@ -70,7 +70,7 @@ def main():
             utils.copy2scratch(files, gta.workdir)
         else:
             logging.error("No files found in {0:s}".format(fit_config['avgspec']))
-
+            args.reloadfit = False
 
     if args.state == 'lcbin':
         pps = PreparePointSource(config,logging={'verbosity' : 3})
@@ -99,7 +99,10 @@ def main():
         if args.reloadfit:
             # save old spectrum
             spec_cat = gta.roi.get_source_by_name(config['selection']['target'])
-            gta.load_roi(args.state) # reload the average spectral fit
+            try:
+                gta.load_roi(args.state) # reload the average spectral fit
+            except:
+                logging.error("Could not reload fit. Continuing anyway.")
         logging.info('Running fermipy optimize and fit')
         # gives "failed to create spline" in get_parameter_limits function
 

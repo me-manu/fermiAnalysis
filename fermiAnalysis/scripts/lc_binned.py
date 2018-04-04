@@ -9,7 +9,6 @@ import logging
 from haloanalysis.batchfarm import utils,lsf
 import fermiAnalysis as fa
 from fermiAnalysis.utils import * 
-from fermiAnalysis import adaptivebinning as ab
 import argparse
 import yaml
 import os
@@ -123,10 +122,10 @@ def main():
                                                     ft1 = config['data']['evfile'])
     logging.debug('setting light curve bin' + \
         '{0:n}, between {1[tmin]:.0f} and {1[tmax]:.0f}'.format(job_id, config['selection']))
-    config['fileio']['outdir'] = utils.mkdir(path.join(config['fileio']['outdir'],
-                        '{0:05n}/'.format(job_id if job_id > 0 else 1)))
     if args.adaptive:
         config['fileio']['outdir'] = utils.mkdir(path.join(config['fileio']['outdir'],'adaptive/'))
+    config['fileio']['outdir'] = utils.mkdir(path.join(config['fileio']['outdir'],
+                        '{0:05n}/'.format(job_id if job_id > 0 else 1)))
 
     logging.info('Starting with fermipy analysis')
     logging.info('using fermipy version {0:s}'.format(fermipy.__version__))
@@ -156,6 +155,7 @@ def main():
         logging.warning("Source closets to ROI center is {0:.3f} degree away".format(sep))
         if sep < 0.1:
             config['selection']['target'] = gta.roi.sources[0]['name']
+            gta.config['selection']['target'] = config['selection']['target']
             logging.info("Set target to {0:s}".format(config['selection']['target']))
 
     # stage the full time array analysis results to the tmp dir
@@ -255,6 +255,8 @@ def main():
 
     if compute_sub_gti_lc:
         if args.adaptive:
+            # do import only here since root must be compiled
+            from fermiAnalysis import adaptivebinning as ab
              # compute the exposure
             energy = 1000.
             texp, front, back = ab.comp_exposure_phi(gta, energy = 1000.)
@@ -270,6 +272,25 @@ def main():
             # cut the bins to this GTI
             mask = result['tstop'] > config['selection']['tmin']
             mask = mask & (result['tstart'] < config['selection']['tmax'])
+
+            # try again with catalog values
+            if not np.sum(mask):
+                logging.error("Adaptive bins outside time window, trying catalog values for flux")
+                result = ab.time_bins(gta, texp,
+                                    0.5 * (front + back), 
+                                    critval = 20., # bins with ~20% unc
+                                    Epivot = None, # compute on the fly
+                                    forcecatalog = True,
+            #                        tstart = config['selection']['tmin'],
+            #                        tstop = config['selection']['tmax']
+                                    )
+
+                # cut the bins to this GTI
+                mask = result['tstop'] > config['selection']['tmin']
+                mask = mask & (result['tstart'] < config['selection']['tmax'])
+                if not np.sum(mask):
+                    raise Exception("Adaptive bins do not cover selected time interval!")
+
             bins = np.concatenate((result['tstart'][mask], [result['tstop'][mask][-1]]))
             bins[0] = np.max([config['selection']['tmin'], bins[0]])
             bins[-1] = np.min([config['selection']['tmax'], bins[-1]])
@@ -277,15 +298,6 @@ def main():
             logging.info("Using bins {0}, total n={1:n} bins".format(bins, len(bins)-1))
             logging.info("bins widths : {0}".format(np.diff(bins)))
             logging.info("counts per bin: {0} ".format(calc_counts(t,bins)))
-
-
-            t = Table(result)
-            tfile = path.join(gta.workdir, 'time_bins.fits')
-            t.write(tfile, overwrite = True)
-
-            exp = Table(dict(time = texp, front = front, back = back))
-            expfile = path.join(gta.workdir, 'exposure_{0:n}MeV.fits'.format(energy))
-            exp.write(expfile, overwrite = True)
 
             utils.copy2scratch([tfile, expfile], config['fileio']['outdir'])
 # TODO: test that this is working also with GTIs that have little or no counts
@@ -366,19 +378,9 @@ def main():
 
         if args.srcprob:
             pps = PreparePointSource(config,logging={'verbosity' : 3})
-            logging.info("Running srcprob with srcmdl {0:s}".format(args.srcmdl))
+            logging.info("Running srcprob with srcmdl {0:s}".format('lc'))
             pps._compute_srcprob('lc',
-                overwrite = args.overwrite)
-
-            # compute the exposure
-            energy = 1000.
-            texp, front, back = ab.comp_exposure_phi(gta, energy = 1000.)
-
-            exp = Table(dict(time = texp, front = front, back = back))
-            expfile = path.join(gta.workdir, 'exposure_{0:n}MeV.fits'.format(energy))
-            exp.write(expfile)
-
-            utils.copy2scratch(expfile, config['fileio']['outdir'])
+                overwrite = True)
     return gta 
 
 if __name__ == '__main__':

@@ -94,7 +94,9 @@ def mjd_to_met(time):
     #""""Convert mission elapsed time to mean julian date."""
     #    return 54682.65 + (time - 239557414.0) / (86400.)
 
-def fit_with_retries(gta, fit_config, target, alt_spec_pars = None):
+def fit_with_retries(gta, fit_config, target,
+                        alt_spec_pars = None,
+                        tsmax = 1e3):
     """Fit the model and retry if not converged"""
 
     try:
@@ -129,8 +131,15 @@ def fit_with_retries(gta, fit_config, target, alt_spec_pars = None):
                         pars=fa.allidx + fa.allnorm)
         logging.info("retrying fit, {0:n} retries left".format(retries))
         nfree = print_free_sources(gta)
-        if nfree == nfree0:
+
+        if nfree == nfree0 and tsfix < tsmax:
             continue
+        elif nfree == nfree0 and tsfix >= tsmax:
+            # freeze all index parameters
+            logging.info("TS fix maximum reached, fixing all indeces")
+            gta.free_sources(free=False,
+                                pars=fa.allidx)
+            nfree0 = print_free_sources(gta)
         else:
             nfree0 = nfree
             logging.info("Retrying fit with {0:n} free parameters".format(nfree))
@@ -542,7 +551,9 @@ def add_ebl_atten(gta, src, z, eblmodel = 'dominguez', force_lp= False):
     logging.info('New source parameters are: {0}'.format(gta.roi.get_source_by_name(src).spectral_pars))
     return gta
 
-def collect_lc_results(outfiles, hdu = "CATALOG", createsedlc = False):
+def collect_lc_results(outfiles, hdu = "CATALOG",
+                                createsedlc = False):
+
     ff = glob(outfiles)
     ff = sorted(ff, key = lambda f: int(path.dirname(f).split('/')[-1]))
     logging.debug('collecting results from {0:n} files'.format(len(ff)))
@@ -565,6 +576,7 @@ def collect_lc_results(outfiles, hdu = "CATALOG", createsedlc = False):
     for i,fi in enumerate(ff):
         logging.debug('Opening {0:s}'.format(fi))
         f = fits.open(fi)
+
         if hdu == 'CATALOG':
             idx = np.argmin(f[hdu].data['offset']) # index of central source
             s = slice(idx,idx+1)
@@ -676,4 +688,6 @@ def collect_lc_results(outfiles, hdu = "CATALOG", createsedlc = False):
     t['flux_err'].unit = 'cm-2 s-1'
     t['eflux'].unit = 'MeV cm-2 s-1' 
     t['eflux_err'].unit = 'MeV cm-2 s-1' 
+
     return t
+

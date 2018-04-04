@@ -239,7 +239,7 @@ def missing_files(fname,fn, missing = True, minimum = 0, num = 5,
 
     else:
 	return miss
-def parse_logfiles(path2log, string, filenames = 'err.*'):
+def parse_logfiles(path2log, string, nostring = None, filenames = 'err.*'):
     """
     Parse log files of job array and return list with job numbers
     where string was found in log file. 
@@ -257,6 +257,8 @@ def parse_logfiles(path2log, string, filenames = 'err.*'):
     ------
     filenames: str
 	wild card for log files, default is "err.*"
+    nostring: str or none
+    if given, do not exlude logfile if line contains this string
     """
     logfiles = glob(join(path2log,filenames))
     logfiles = sorted(logfiles, key = lambda f: int(basename(f).split('.')[-1]))
@@ -266,8 +268,13 @@ def parse_logfiles(path2log, string, filenames = 'err.*'):
     idx = []
     # loop through files
     for i,lf in enumerate(logfiles):
-	for line in open(lf):
-	    if string in line: idx.append(i)
+        for line in open(lf):
+            if string in line:
+                if not type(nostring) == type(None):
+                    if not nostring in line:
+                        idx.append(i)
+                else:
+                    idx.append(i)
     logging.info("Found {0:n} log files that contain {1:s} which will be removed from missing files".format(len(idx),string))
     return ids[idx]
 

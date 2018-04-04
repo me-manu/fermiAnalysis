@@ -6,13 +6,17 @@ from astropy.io import fits
 from astropy.table import Table
 from astropy.coordinates import SkyCoord
 from ROOT import gROOT
-
-macropath = "/nfs/farm/g/glast/u/mmeyer/adaptive/"
-gROOT.SetBatch(True)
+import fermiAnalysis
 try:  
-    gROOT.LoadMacro(path.join(macropath, "TS_estimate_P8.C") +"++")
+    gROOT.LoadMacro(path.join(path.dirname(fermiAnalysis.__file__),
+                                "TS_estimate_P8_C.so"))
 except:
-    gROOT.LoadMacro(path.join(macropath, "TS_estimate_P8.C"))
+    try:
+        gROOT.LoadMacro(path.join(path.dirname(fermiAnalysis.__file__),
+                                "TS_estimate_P8.C") +"++")
+    except:
+        gROOT.LoadMacro(path.join(path.dirname(fermiAnalysis.__file__),
+                                "TS_estimate_P8.C"))
 from ROOT import get_evtlim
 from ROOT import initialize_TS, get_E1
 from ROOT import Glob_mult
@@ -29,7 +33,7 @@ def comp_E1(gta):
     irfs = gta.config['gtlike']['irfs']
     l = src['glon']
     b = src['glat']
-    initialize_TS(macropath)  
+    initialize_TS(path.dirname(fermiAnalysis.__file__))  
     logging.error("{0}".format([flux,index, l, b, emin, emax]))
     return get_E1(flux,index, l, b, emin, emax)
 
@@ -217,6 +221,7 @@ def time_bins(gta, tcen, exp,
     critval = 20., 
     tstart = 0, rev = 0, sources = None, crit = 1,
     tstop = 1e40, 
+    forcecatalog = False,
     normeg=1, normgal=1, indexgal=0, Epivot = None):
     """
     Run the adaptive time binning
@@ -251,6 +256,8 @@ def time_bins(gta, tcen, exp,
         If none, calculate light curve for central source, 
         otherwise for sources whose names match the gta source names.
         First source in list will be used.
+    forcecatalog: bool
+        if true, use catalog values for flux and index
     """
 
     irfs = gta.config['gtlike']['irfs']
@@ -268,7 +275,7 @@ def time_bins(gta, tcen, exp,
     if type(sources) == type(None):
         src = gta.roi[gta.config['selection']['target']]
         c = [SkyCoord(ra = src.radec[0],dec =  src.radec[1], unit = 'deg')]
-        if np.isnan(src['flux']):
+        if np.isnan(src['flux']) or forcecatalog:
             flux = array('d',[src['catalog']['Flux1000']])
             index = array('d',[src['catalog']['Spectral_Index']])
         else:
@@ -314,7 +321,7 @@ def time_bins(gta, tcen, exp,
 
     irfs = gta.config['gtlike']['irfs']
     if (irfs=="P8R2_SOURCE_V6"):
-        initialize_TS(macropath)  
+        initialize_TS(path.dirname(fermiAnalysis.__file__))  
     else:
         raise Exception("Only IRF P8R2_SOURCE_V6 implemented!")
 
