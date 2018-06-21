@@ -10,6 +10,7 @@ from fermipy.utils import met_to_mjd
 from scipy.stats import linregress
 import fermiAnalysis as fa 
 import subprocess
+import copy
 
 def excise_solar_flares_grbs(tsmin = 100.,
     sf_file = "/u/gl/omodei/SunMonitor_P8/SUN-ORB-TEST/SUN-ORB-TEST_jean.txt",
@@ -690,4 +691,41 @@ def collect_lc_results(outfiles, hdu = "CATALOG",
     t['eflux_err'].unit = 'MeV cm-2 s-1' 
 
     return t
+
+def myconf2fermipy(myconfig):
+    """Convert my config files to fermipy config files"""
+    config = copy.deepcopy(myconfig)
+    if config['data']['ltcube'] == '':
+        config['data'].pop('ltcube',None)
+    for k in ['configname', 'tmp', 'log', 'fit_pars']: 
+        config.pop(k,None)
+    if type(config['lightcurve']['binsz']) == str:
+        if config['lightcurve']['binsz'] == 'gti':
+            config['lightcurve']['binsz'] = 3600. * 3.
+        elif len(config['lightcurve']['binsz'].strip('gti')):
+            if 'min' in config['lightcurve']['binsz'] > 0:
+                config['lightcurve']['binsz'] = float(
+                    config['lightcurve']['binsz'].strip('gti').strip('min')) * 60.
+    return config
+
+def read_srcprob(ft1srcprob, srcname):
+    """Get the srcprob from an FT1 file or a list of files and one source"""
+    if type(ft1srcprob) == str:
+        ft1srcprob = [ft1srcprob]
+
+    if not len(ft1srcprob):
+        raise ValueError("No files found in {0}".format(ft1srcprob))
+    for io,o in enumerate(ft1srcprob):
+        t = Table.read(o, hdu = "EVENTS")
+        if not io: 
+            energies = t["ENERGY"].data
+            times = t["TIME"].data
+            conv = t["CONVERSION_TYPE"].data
+            prob = t[srcname].data
+        else:
+            energies = np.concatenate([energies,t["ENERGY"].data])
+            times = np.concatenate([times ,t["TIME"].data])
+            conv = np.concatenate([conv ,t["CONVERSION_TYPE"].data])
+            prob = np.concatenate([prob,t[srcname].data])
+    return energies, times, conv, prob
 

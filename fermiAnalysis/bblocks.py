@@ -1,5 +1,8 @@
 import numpy as np
 import logging
+from scipy.interpolate import interp1d
+from astropy.table import Table
+from fermiAnalysis import adaptivebinning as ab
 
 mjd_to_met = lambda mjd: (mjd - 54682.65) * 86400. +  239557414.0
 met2mjd = lambda met: 54682.65 + (met - 239557414.0) / (86400.)
@@ -438,3 +441,79 @@ def flare_search(flux, tmin, thr_flux, avg_flux,
         t_flare.append([tf_min, tf_max])
 
     return np.array(t_flare), flare_ids
+
+def calc_bb_unbinned(gta, energies, times, conv, prob,
+                        tmin = 0., tmax = 1e20):
+    """
+    Calculate unbinned bayesian blocks from a 
+    FT1 file with src probabilities
+
+    Parameters
+    ----------
+    gta: `~fermipy.GTAnalysis` object
+        The fermipy analysis object
+    energies: `~numpy.ndarray`
+        array with photon energies
+    times: `~numpy.ndarray`
+        array with photon arrival times
+    conv: `~numpy.ndarray`
+        array with photon conversion types
+    prob: `~numpy.ndarray`
+        array with photon src probabilities
+
+    {options}
+
+    tmin: float
+        mininum time for events in MET
+    tmax: float
+        maxinum time for events in MET
+        
+    Returns
+    -------
+    tuple with bins, times, exposure , src probability, and energies
+    """
+
+    # cut on times
+    m = (times >= tmin ) & ( times < tmax )
+    energies = energies[m]
+    times = times[m]
+    conv = conv[m]
+    prob = prob[m]
+
+    # calculate exposure in bins of energy
+    EMeVbins = gta.energies
+    EMeVbins = np.array([1e2, 1e3])
+    EMeVbins = np.logspace(
+                np.log10(energies.min()),
+                np.log10(energies.max()), 4)
+    EMeV = np.sqrt(EMeVbins[1:] * EMeVbins[:-1])
+    EMeV = [500.]
+
+    exp = np.zeros_like(prob)
+    for ie, e in enumerate(EMeV):
+        me = (energies >= EMeVbins[ie]) & (energies < EMeVbins[ie+1])
+
+        texp, f, b = ab.comp_exposure_phi(gta, energy = e)
+        mt = (texp >= times.min() - 60.) & (texp < times.max() + 60.)
+        splinef = interp1d(texp[mt], f[mt], kind = 'nearest')
+        splineb = interp1d(texp[mt], b[mt], kind = 'nearest')
+
+        mef = me & conv.astype(np.bool) & \
+                (times >= texp[mt].min()) & \
+                (times <= texp[mt].max())
+        meb = me & (~conv.astype(np.bool)) & \
+                (times >= texp[mt].min()) & \
+                (times <= texp[mt].max())
+
+        exp[meb] = splineb(times[meb]) / b.max()
+        exp[mef] = splinef(times[mef]) / f.max()
+
+    if np.sum(exp > 0.):
+        logging.info("Calculating unbinned BBs")
+        bins = bayesian_blocks(
+            times[exp > 0.], exp = (exp / prob)[exp > 0.]
+            )
+    else:
+        logging.error("Exp > 0. everywhere, selecting one bin over entire time range")
+        bins = np.array([times.min(), times.max()])
+    return bins, times, exp, prob, energies

@@ -1,4 +1,5 @@
 import numpy as np
+import logging
 import matplotlib.pyplot as plt
 
 
@@ -117,14 +118,14 @@ def data_in_sheds(bbf,xmin, xmax, xref, y, id_sheds, yerr = None):
         m = (xref >= x.min()) & (xref < x.max())
         data_x.append(xref[m])
         data_y.append(y[m])
-        if not type(yerr) == None:
+        if not type(yerr) == type(None):
             data_yerr.append(yerr[m])
     if not type(yerr) == type(None):
         return data_x,data_y,data_yerr
     else:
         return data_x,data_y
 
-def plot_sheds(xmin, xmax, y, id_sheds, bbf = None, 
+def plot_sheds(xmin, xmax, y, id_sheds, bbf = None, ax = None, 
                col = [plt.cm.tab10(0.8),plt.cm.tab10(1.0)],
                hatch = ['////','\\\\\\\\'], exp = 0., **kwargs):
     """
@@ -139,7 +140,7 @@ def plot_sheds(xmin, xmax, y, id_sheds, bbf = None,
         right bin bounds of x values 
     
     id_sheds: `~numpy.ndarray`
-	id vector from hop algorithm
+        id vector from hop algorithm
 
     y: `~numpy.ndarray`
         y value of data points / of BB
@@ -147,6 +148,8 @@ def plot_sheds(xmin, xmax, y, id_sheds, bbf = None,
     bbf: `~numpy.ndarray` or None (optional)
         Bayesian block (BB) ids
     """
+    if type(ax) == type(None):
+        ax = plt.gca()
     for ip, idp in enumerate(id_sheds):
         if len(idp) == 1:
             continue
@@ -162,11 +165,93 @@ def plot_sheds(xmin, xmax, y, id_sheds, bbf = None,
             else:
                 x = np.concatenate([xmin[idp],[xmax[-1]]] )
         f = np.concatenate([y[idp],[y[idp[-1]]]]) / 10.**exp    
-        plt.fill_between(x,f,
+        ax.fill_between(x,f,
                      edgecolor = col[ip % len(col)], hatch = hatch[ip % len(hatch)],
                      facecolor = 'none',
                      step = 'post', **kwargs)
     return
+
+def hop_flares(xmin, xmax, y, id_sheds, threshold_flux, bbf = None, min_flux = None, extend = 0., ts = None):
+    """
+    Determine flare start and end time
+    from HOP sheds above some threshold flux
+    
+    Parameters
+    ----------
+    xmin: `~numpy.ndarray`
+        left bin bounds of x values 
+    
+    xmax: `~numpy.ndarray`
+        right bin bounds of x values 
+    
+    id_sheds: `~numpy.ndarray`
+        id vector from hop algorithm
+
+    y: `~numpy.ndarray`
+        y value of data points / of BB
+
+    threshold_flux: float
+        threshold flux above which HOPs are selected
+        (Or TS value if ts array is provided)
+       
+    bbf: `~numpy.ndarray` or None (optional)
+        Bayesian block (BB) ids
+
+    min_flux: float or None (optional)
+        if given, include only data points above this flux in 
+        the flare time range
+
+    extend : float, 
+        extend each flare range by +/- this value
+    """
+    if not type(min_flux) == type(None):
+        if min_flux > threshold_flux:
+            raise ValueError("Min flux > threshold flux!")
+
+    xhop, fhop_start, fhop_stop = [],[], []
+    for ip, idp in enumerate(id_sheds):
+        if len(idp) == 1:
+            continue
+    
+        if ip < len(id_sheds) - 1:
+            if not type(bbf) == type(None):
+                #x = np.concatenate([xmin[bbf[idp]],[xmin[bbf[idp[-1]+1]]]] )
+                x = np.concatenate([xmin[bbf[idp]],[xmin[bbf[idp[-1]+1]]]] )
+            else:
+                x = np.concatenate([xmin[idp],[xmin[idp[-1]+1]]] )
+        else:
+            if not type(bbf) == type(None):
+                x = np.concatenate([xmin[bbf[idp]],[xmax[-1]]] )
+            else:
+                x = np.concatenate([xmin[idp],[xmax[-1]]] )
+        f = np.concatenate([y[idp],[y[idp[-1]]]])
+        fhop_start.append(np.concatenate([y[idp],[y[idp[-1]]]]))
+        fhop_stop.append(np.concatenate([[y[idp[0]]],y[idp]]))
+        xhop.append(x)
+    # select hops with f > threshold
+    mask = np.array([(f >= threshold_flux).sum() for f in fhop_start]) > 0
+    tflare = []
+    for i,m in enumerate(mask):
+        if m:
+            if type(min_flux) == type(None):
+                xhopi = xhop[i]
+            else:
+                #xhopi = xhop[i][fhop[i] >= min_flux]
+                xhopi = xhop[i][(fhop_start[i] >= min_flux) | (fhop_stop[i] >= min_flux)] 
+
+            if not xhopi.size:
+                #raise ValueError("HOP interval has no entries")
+                logging.warning("No flux values above min flux! Trying next HOP.")
+                continue
+
+            if len(tflare):
+                if xhopi.min() - extend <= tflare[-1][-1]:
+                    tflare[-1][-1] = xhopi.max() + extend # extend time range
+                else:
+                    tflare.append([xhopi.min() - extend , xhopi.max() + extend])
+            else:
+                tflare.append([xhopi.min() - extend, xhopi.max() + extend])
+    return np.array(tflare)
 
 def estimate_time(f,dt,fpeak):
     """Estimate rise / decay time"""
@@ -195,7 +280,9 @@ def calc_flare_duration_rise_decay(xmin, xmax, y, id_sheds, bbf = None):
     bbf: `~numpy.ndarray` or None (optional)
         Bayesian block (BB) ids
     """
-    tr, td, dtflare, fpeak = [],[],[],[]
+    tr, td, dtflare, fpeak,fintegral = [],[],[],[],[]
+
+    # loop through water sheds
     for ip, idp in enumerate(id_sheds):
         if len(idp) == 1:
             continue
@@ -213,23 +300,34 @@ def calc_flare_duration_rise_decay(xmin, xmax, y, id_sheds, bbf = None):
 
         dt = np.diff(x)
         f = y[idp]
+        tcen = 0.5 * (x[:-1] + x[1:])
         idmax = np.argmax(f)
 
         if idmax == f.size - 1:
-            trise = estimate_time(f, dt, f[idmax])
-            tdecay = dt[-1]
+        #    trise = estimate_time(f, dt, f[idmax])
+            idmin = np.argmin(f)
+            trise = tcen[idmax] - tcen[idmin]
+            tdecay = 0. # no decay
 
         elif idmax == 0:
-            trise = dt[0]
-            tdecay = estimate_time(f, dt, f[idmax])
+            idmin = np.argmin(f)
+            trise = 0.
+            #tdecay = estimate_time(f, dt, f[idmax])
+            tdecay = tcen[idmin] - tcen[idmax]
 
         else:
-            trise = estimate_time(f[:idmax + 1], dt[:idmax + 1], f[idmax])
-            tdecay = estimate_time(f[idmax:], dt[idmax:], f[idmax])
+            #trise = estimate_time(f[:idmax + 1], dt[:idmax + 1], f[idmax])
+            #tdecay = estimate_time(f[idmax:], dt[idmax:], f[idmax])
+            idmin_pre = np.argmin(f[:idmax])
+            idmin_post = np.argmin(f[idmax:])
+            trise = tcen[idmax] - tcen[:idmax][idmin_pre]
+            tdecay = tcen[idmax:][idmin_post] - tcen[idmax] 
+
 
         tr.append(trise)
         td.append(tdecay)
         dtflare.append(dt.sum())
         fpeak.append(f[idmax])
+        fintegral.append((f * dt).sum())
 
-    return np.array(tr), np.array(td), np.array(dtflare), np.array(fpeak)
+    return np.array(tr), np.array(td), np.array(dtflare), np.array(fpeak), np.array(fintegral)

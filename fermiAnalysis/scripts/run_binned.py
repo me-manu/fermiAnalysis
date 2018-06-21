@@ -276,7 +276,10 @@ def main():
     else:
         ts_maps = gta.tsmap(args.state,model=model, 
             write_fits = True, write_npy = True, make_plots = True)
-    resid_maps = gta.residmap(args.state,model=model, make_plots=True, write_fits = True, write_npy = True)
+    try:
+        resid_maps = gta.residmap(args.state,model=model, make_plots=True, write_fits = True, write_npy = True)
+    except:
+        logging.error("Residual map computation and plotting failed")
 
 
     if args.createsed:

@@ -44,6 +44,15 @@ def rebin(c,b,minc = 10):
 
     return newt
 
+def rm_trailing_zeros(counts):
+    """Remove bins with trailing zeros"""
+    mcounts_pre = np.cumsum(counts) > 4.
+    mcounts_post = np.cumsum(counts[::-1])[::-1] > 4.
+    if not np.sum(mcounts_post & mcounts_pre):
+        logging.error("*** After removing trailing bins with less than 4 counts, no bins left! Exiting")
+        raise Exception
+    return mcounts_post, mcounts_pre
+
 def calc_counts(t,bins):
     """
     Use photons in table t and bins to calculate number of counts 
@@ -180,45 +189,40 @@ def main():
 
     # check how many bins are in each potential light curve bin
     if compute_sub_gti_lc:
-        if not args.adaptive:
 # select time of first and last 
 # photon instead of GTI time
-            m = (t["TIME"] >= config['selection']['tmin']) & \
-                 (t["TIME"] <= config['selection']['tmax'])
+        m = (t["TIME"] >= config['selection']['tmin']) & \
+             (t["TIME"] <= config['selection']['tmax'])
 
-            tmin = t["TIME"][m].min() - 1.
-            tmax = t["TIME"][m].max() + 1.
-            logging.info("There will be up to {0:n} time bins".format(np.ceil(
-                (tmax - tmin) / \
-                config['lightcurve']['binsz'])))
+        tmin = t["TIME"][m].min() - 1.
+        tmax = t["TIME"][m].max() + 1.
+        logging.info("There will be up to {0:n} time bins".format(np.ceil(
+            (tmax - tmin) / \
+            config['lightcurve']['binsz'])))
 
-            bins = np.arange(tmin,tmax,config['lightcurve']['binsz'])
-            bins = np.concatenate([bins, [config['selection']['tmax']]])
-            counts = calc_counts(t,bins)
-            # remove the starting times of the bins with zero counts
-            # and rebin the data
-            logging.info("Counts before rebinning: {0}".format(counts))
-            mincounts = 10.
-            mc = counts < mincounts
-            if np.sum(mc):
-                # remove trailing zeros
-                if np.any(counts == 0.):
-                    mcounts_pre = np.cumsum(counts) > 4.
-                    mcounts_post = np.cumsum(counts[::-1])[::-1] > 4.
-                    if not np.sum(mcounts_post & mcounts_pre):
-                        logging.error("*** After removing trailing bins with less than 4 counts, no bins left! Exiting")
-                        raise Exception
-                    counts = counts[mcounts_post & mcounts_pre]
-                    bins = np.concatenate([bins[:-1][mcounts_post & mcounts_pre],
-                        [bins[1:][mcounts_post & mcounts_pre].max()]])
-                bins = rebin(counts, bins)
-                logging.info("Bin lengths after rebinning: {0}".format(np.diff(bins)))
-                logging.info("Bin times after rebinning: {0}".format(bins))
-                counts = calc_counts(t, bins)
-                logging.info("Counts after rebinning: {0}".format(counts))
-            else:
-                logging.info("Regular time binning will be used")
-            bins = list(bins)
+        bins = np.arange(tmin,tmax,config['lightcurve']['binsz'])
+        bins = np.concatenate([bins, [config['selection']['tmax']]])
+        counts = calc_counts(t,bins)
+        # remove the starting times of the bins with zero counts
+        # and rebin the data
+        logging.info("Counts before rebinning: {0}".format(counts))
+        mincounts = 10.
+        mc = counts < mincounts
+        if np.sum(mc):
+            # remove trailing zeros
+            if np.any(counts == 0.):
+                mcounts_post, mcounts_pre = rm_trailing_zeros(counts)
+                counts = counts[mcounts_post & mcounts_pre]
+                bins = np.concatenate([bins[:-1][mcounts_post & mcounts_pre],
+                    [bins[1:][mcounts_post & mcounts_pre].max()]])
+            bins = rebin(counts, bins)
+            logging.info("Bin lengths after rebinning: {0}".format(np.diff(bins)))
+            logging.info("Bin times after rebinning: {0}".format(bins))
+            counts = calc_counts(t, bins)
+            logging.info("Counts after rebinning: {0}".format(counts))
+        else:
+            logging.info("Regular time binning will be used")
+        bins = list(bins)
 
     logging.info('Running fermipy setup')
     try:
@@ -289,17 +293,26 @@ def main():
                 mask = result['tstop'] > config['selection']['tmin']
                 mask = mask & (result['tstart'] < config['selection']['tmax'])
                 if not np.sum(mask):
-                    raise Exception("Adaptive bins do not cover selected time interval!")
+                    logging.error("Adaptive bins do not cover selected time interval!")
+                    logging.error("Using original bins")
 
-            bins = np.concatenate((result['tstart'][mask], [result['tstop'][mask][-1]]))
-            bins[0] = np.max([config['selection']['tmin'], bins[0]])
-            bins[-1] = np.min([config['selection']['tmax'], bins[-1]])
-            bins = list(bins)
-            logging.info("Using bins {0}, total n={1:n} bins".format(bins, len(bins)-1))
-            logging.info("bins widths : {0}".format(np.diff(bins)))
-            logging.info("counts per bin: {0} ".format(calc_counts(t,bins)))
+                else:
+                    bins = np.concatenate((result['tstart'][mask], [result['tstop'][mask][-1]]))
+                    bins[0] = np.max([config['selection']['tmin'], bins[0]])
+                    bins[-1] = np.min([config['selection']['tmax'], bins[-1]])
+                    bins = list(bins)
 
-            utils.copy2scratch([tfile, expfile], config['fileio']['outdir'])
+                    # removing trailing zeros
+                    counts = calc_counts(t,bins)
+                    mcounts_post, mcounts_pre = rm_trailing_zeros(counts)
+                    counts = counts[mcounts_post & mcounts_pre]
+                    bins = np.concatenate([bins[:-1][mcounts_post & mcounts_pre],
+
+                    [bins[1:][mcounts_post & mcounts_pre].max()]])
+                    logging.info("Using bins {0}, total n={1:n} bins".format(bins, len(bins)-1))
+                    logging.info("bins widths : {0}".format(np.diff(bins)))
+                    logging.info("counts per bin: {0} ".format(calc_counts(t,bins)))
+
 # TODO: test that this is working also with GTIs that have little or no counts
 
         lc = gta.lightcurve(config['selection']['target'],
@@ -377,10 +390,8 @@ def main():
     #resid_maps = gta.residmap('lc',model=model, make_plots=True, write_fits = True, write_npy = True)
 
         if args.srcprob:
-            pps = PreparePointSource(config,logging={'verbosity' : 3})
             logging.info("Running srcprob with srcmdl {0:s}".format('lc'))
-            pps._compute_srcprob('lc',
-                overwrite = True)
+            gta.compute_srcprob(xmlfile = 'lc', overwrite = True)
     return gta 
 
 if __name__ == '__main__':

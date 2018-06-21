@@ -8,6 +8,7 @@ from astropy.coordinates import SkyCoord
 from ROOT import gROOT
 import fermiAnalysis
 try:  
+    print "Loading macro"
     gROOT.LoadMacro(path.join(path.dirname(fermiAnalysis.__file__),
                                 "TS_estimate_P8_C.so"))
 except:
@@ -33,7 +34,7 @@ def comp_E1(gta):
     irfs = gta.config['gtlike']['irfs']
     l = src['glon']
     b = src['glat']
-    initialize_TS(path.dirname(fermiAnalysis.__file__))  
+    initialize_TS(path.dirname(fermiAnalysis.__file__) + '/')  
     logging.error("{0}".format([flux,index, l, b, emin, emax]))
     return get_E1(flux,index, l, b, emin, emax)
 
@@ -321,7 +322,7 @@ def time_bins(gta, tcen, exp,
 
     irfs = gta.config['gtlike']['irfs']
     if (irfs=="P8R2_SOURCE_V6"):
-        initialize_TS(path.dirname(fermiAnalysis.__file__))  
+        initialize_TS(path.dirname(fermiAnalysis.__file__) + '/')  
     else:
         raise Exception("Only IRF P8R2_SOURCE_V6 implemented!")
 
