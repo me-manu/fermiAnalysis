@@ -59,6 +59,9 @@ def main():
     parser.add_argument('--sethardexpcutoff', default = 0,  
                         help='Manually change parameters of PL with SuperExpCutoff',
                         type=int)
+    parser.add_argument('--pivotE_free', default = 0,  
+                        help='let the pivot energy free during fit if spectrum is changed',
+                        type=int)
     args = parser.parse_args()
 
     gta, config, fit_config, job_id  = setup.init_gta(args.conf, i = args.i, logging_level = "INFO")
@@ -95,6 +98,24 @@ def main():
             if sep < 0.1:
                 config['selection']['target'] = gta.roi.sources[0]['name']
                 logging.info("Set target to {0:s}".format(config['selection']['target']))
+            else: # add source at center of ROI
+                csrc = SkyCoord(ra = config['selection']['ra'],
+                        dec = config['selection']['dec'], frame = 'fk5', unit = 'degree')
+                if csrc.dec.value < 0.:
+                    sign = '-'
+                else:
+                    sign = '+'
+                newname = 'j{0:02.0f}{1:02.0f}{2:s}{3:02.0f}{4:02.0f}'.format(
+                                        csrc.ra.hms.h, csrc.ra.hms.m, sign, 
+                                        np.abs(csrc.dec.dms.d), np.abs(csrc.dec.dms.m))
+                gta.add_source(newname,{
+                                'ra' : config['selection']['ra'], 'dec' : config['selection']['dec'],
+                                'SpectrumType' : 'PowerLaw', 'Index' : fit_config['new_src_pl_index'],
+                                'Scale' : fit_config['pivotE'] if 'pivotE' in fit_config.keys() else 1000.,
+                                'Prefactor' : 1e-11,
+                                'SpatialModel' : 'PointSource' })
+                config['selection']['target'] = newname
+                logging.info("Set target to {0:s}".format(config['selection']['target']))
 
         if args.reloadfit:
             # save old spectrum
@@ -110,9 +131,13 @@ def main():
             m = gta.roi.get_source_by_name(config['selection']['target'])
             if not m['SpectrumType'] == fit_config['source_spec'] or args.forcespec:
                 if fit_config['source_spec'] == 'PowerLaw':
-                    gta = set_src_spec_pl(gta, gta.get_source_name(config['selection']['target']))
+                    gta = set_src_spec_pl(gta, gta.get_source_name(config['selection']['target']), 
+                                        fit_config['pivotE'] if 'pivotE' in fit_config.keys() else None,
+                                        e0_free = args.pivotE_free)
                 elif fit_config['source_spec'] == 'PLSuperExpCutoff':
-                    gta = set_src_spec_plexpcut(gta, gta.get_source_name(config['selection']['target']))
+                    gta = set_src_spec_plexpcut(gta, gta.get_source_name(config['selection']['target']),
+                                        fit_config['pivotE'] if 'pivotE' in fit_config.keys() else None,
+                                        e0_free = args.pivotE_free)
                 #elif fit_config['source_spec'] == 'LogParabola':
                     #gta = set_src_spec_lp(gta, gta.get_source_name(config['selection']['target']))
                 else:
@@ -133,16 +158,26 @@ def main():
             logging.info("restored catalog spectrum")
 
         # for some sources modeled with PL with super exponential cutoff I 
-        # have to do this to get a nice SED
+        # have to do this to get a nice SED, but not for 3C454.3!
         if gta.roi.get_source_by_name(config['selection']['target'])['SpectrumType'] ==\
-            'PLSuperExpCutoff' and args.sethardexpcutoff:
+            'PLSuperExpCutoff' and args.sethardexpcutoff :
             pars = {}
             old_spec_pars = copy.deepcopy(gta.roi.get_source_by_name(config['selection']['target']))
             for k in ['Prefactor','Scale','Index1','Index2','Cutoff']:
                 pars[k] = old_spec_pars.spectral_pars[k]
-            pars['Index1']['value'] = 1.8
-            pars['Index2']['value'] = 1.
-            pars['Cutoff']['value'] = 5e4
+            if config['selection']['target'] == '3C454.3':
+                # values from Romoli et al 2017
+                pars['Prefactor']['value'] = 4.7
+                pars['Index1']['value'] = 1.87
+                pars['Index2']['value'] = 0.4
+                pars['Cutoff']['value'] = 1100.
+                pars['Cutoff']['scale'] = 1.
+                pars['Cutoff']['min'] = 100.
+                pars['Cutoff']['max'] = 10000.
+            else:
+                pars['Index1']['value'] = 1.8
+                pars['Index2']['value'] = 1.
+                pars['Cutoff']['value'] = 5e4
             gta.set_source_spectrum(config['selection']['target'],
             #    spectrum_type = 'PLSuperExpCutoff2',
                 spectrum_type = 'PLSuperExpCutoff',
@@ -288,12 +323,13 @@ def main():
         sed = gta.sed(config['selection']['target'],
                         prefix = args.state,
                         #outfile = 'sed.fits',
-                        #free_radius = sed_config['free_radius'],
-                        #free_background= sed_config['free_background'],
-                        free_pars = fa.allnorm
+                        #free_radius =  #sed_config['free_radius'],
+                        #free_background= #sed_config['free_background'],
+                        free_pars = fa.allnorm,
                         #make_plots = sed_config['make_plots'],
                         #cov_scale = sed_config['cov_scale'],
                         #use_local_index = sed_config['use_local_index'],
+                        #use_local_index = True, # sed_config['use_local_index'],
                         #bin_index = sed_config['bin_index']
                         )
 

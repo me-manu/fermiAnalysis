@@ -2,7 +2,6 @@ import numpy as np
 import logging
 from scipy.interpolate import interp1d
 from astropy.table import Table
-from fermiAnalysis import adaptivebinning as ab
 
 mjd_to_met = lambda mjd: (mjd - 54682.65) * 86400. +  239557414.0
 met2mjd = lambda met: 54682.65 + (met - 239557414.0) / (86400.)
@@ -472,6 +471,7 @@ def calc_bb_unbinned(gta, energies, times, conv, prob,
     -------
     tuple with bins, times, exposure , src probability, and energies
     """
+    from fermiAnalysis import adaptivebinning as ab
 
     # cut on times
     m = (times >= tmin ) & ( times < tmax )

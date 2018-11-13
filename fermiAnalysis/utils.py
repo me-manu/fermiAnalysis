@@ -318,7 +318,7 @@ ebl_st_model_list = ['kneiske', 'primack05', 'kneiske_highUV', 'stecker05',
                        'gilmore_fixed', 'scully14_lowOp', 'scully14_highOp',
                        'inoue', 'helgasonKashlinsky']
 
-def set_src_spec_pl(gta, src):
+def set_src_spec_pl(gta, src, e0 = None, e0_free = False):
     """
     Set an arbitrary source spectrum to a power law
     with a fitted index (using scipy.stats.linegress)
@@ -332,6 +332,12 @@ def set_src_spec_pl(gta, src):
 
     src: string
         source name
+
+    e0: float or None (optional)
+        if float, force pivot energy to this value
+
+    e0_free: bool
+        let pivot energy free during fit 
     """
     m = gta.roi.get_source_by_name(src)
     loge = np.sort(gta.log_energies)
@@ -349,14 +355,15 @@ def set_src_spec_pl(gta, src):
     else:
         slope = r.slope
 
-    if m['SpectrumType'] == 'LogParabola':
-        e0 = m['spectral_pars']['Eb']['value']
-    else:
-        try:
-            e0 = m['spectral_pars']['Scale']['value']
-        except KeyError:
-            logging.warning("Did not find 'Scale' in spectral pars, using pivot energy for E0")
-            e0 = gta.get_src_model(src)['pivot_energy']
+    if e0 is None:
+        if m['SpectrumType'] == 'LogParabola':
+            e0 = m['spectral_pars']['Eb']['value']
+        else:
+            try:
+                e0 = m['spectral_pars']['Scale']['value']
+            except KeyError:
+                logging.warning("Did not find 'Scale' in spectral pars, using pivot energy for E0")
+                e0 = gta.get_src_model(src)['pivot_energy']
 
     prefactor = gta.like[src].flux(10.**loge[0],10.**loge[-1])
     # compute the normalization so that integrated 
@@ -381,8 +388,8 @@ def set_src_spec_pl(gta, src):
                             name= 'Prefactor',scale= 1.0,
                             value= prefactor)
     pars['Scale'] = dict(error= np.nan,
-                        free= False,
-                        max= 1000.0, min= 0.001,
+                        free= e0_free,
+                        max= e0 * 10., min= e0 / 10.,
                         name= 'Scale', scale= 1.0,
                         value= e0)
 
@@ -391,7 +398,7 @@ def set_src_spec_pl(gta, src):
     logging.info('New source parameters are: {0}'.format(gta.roi.get_source_by_name(src).spectral_pars))
     return gta
 
-def set_src_spec_plexpcut(gta, src):
+def set_src_spec_plexpcut(gta, src, e0 = None, e0_free = False):
     """
     Set an arbitrary source spectrum to a power law
     with exponential cut off 
@@ -403,17 +410,24 @@ def set_src_spec_plexpcut(gta, src):
 
     src: string
         source name
+
+    e0: float or None (optional)
+        if float, force pivot energy to this value
+
+    e0_free: bool
+        let pivot energy free during fit 
     """
     m = gta.roi.get_source_by_name(src)
 
-    if m['SpectrumType'] == 'LogParabola':
-        e0 = m['spectral_pars']['Eb']['value']
-    else:
-        try:
-            e0 = m['spectral_pars']['Scale']['value']
-        except KeyError:
-            logging.warning("Did not find 'Scale' in spectral pars, using pivot energy for E0")
-            e0 = gta.get_src_model(src)['pivot_energy']
+    if e0 is None:
+        if m['SpectrumType'] == 'LogParabola':
+            e0 = m['spectral_pars']['Eb']['value']
+        else:
+            try:
+                e0 = m['spectral_pars']['Scale']['value']
+            except KeyError:
+                logging.warning("Did not find 'Scale' in spectral pars, using pivot energy for E0")
+                e0 = gta.get_src_model(src)['pivot_energy']
 
     loge = np.sort(gta.log_energies)
     logecen = 0.5 * (loge[1:] + loge[:-1])
@@ -459,8 +473,8 @@ def set_src_spec_plexpcut(gta, src):
                             name= 'Prefactor',scale= 10.**prefactor_scale,
                             value= prefactor / 10.**prefactor_scale)
     pars['Scale'] = dict(error= np.nan,
-                        free= False,
-                        max= 1000.0, min= 0.001,
+                        free= e0_free,
+                        max= e0 * 10., min= e0 / 10.,
                         name= 'Scale', scale= 1.0,
                         value= e0)
     pars['Cutoff'] = dict(error= np.nan,
@@ -699,6 +713,8 @@ def myconf2fermipy(myconfig):
         config['data'].pop('ltcube',None)
     for k in ['configname', 'tmp', 'log', 'fit_pars']: 
         config.pop(k,None)
+    if 'adaptive' in config['lightcurve'].keys():
+        config['lightcurve'].pop('adaptive',None)
     if type(config['lightcurve']['binsz']) == str:
         if config['lightcurve']['binsz'] == 'gti':
             config['lightcurve']['binsz'] = 3600. * 3.

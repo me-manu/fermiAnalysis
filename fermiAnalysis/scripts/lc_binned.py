@@ -121,6 +121,8 @@ def main():
     # remove parameters from config file not accepted by fermipy
     for k in ['configname', 'tmp', 'log', 'fit_pars']: 
         config.pop(k,None)
+    if 'adaptive' in config['lightcurve'].keys():
+        config['lightcurve'].pop('adaptive', None)
 
     # set the correct time bin
     config['selection']['tmin'],config['selection']['tmax'],nj = set_lc_bin(
@@ -132,7 +134,8 @@ def main():
     logging.debug('setting light curve bin' + \
         '{0:n}, between {1[tmin]:.0f} and {1[tmax]:.0f}'.format(job_id, config['selection']))
     if args.adaptive:
-        config['fileio']['outdir'] = utils.mkdir(path.join(config['fileio']['outdir'],'adaptive/'))
+        config['fileio']['outdir'] = utils.mkdir(path.join(config['fileio']['outdir'],'adaptive{0:.0f}/'.format(
+                                                    lc_config['adaptive'])))
     config['fileio']['outdir'] = utils.mkdir(path.join(config['fileio']['outdir'],
                         '{0:05n}/'.format(job_id if job_id > 0 else 1)))
 
@@ -267,7 +270,8 @@ def main():
             # compute the bins
             result = ab.time_bins(gta, texp,
                                     0.5 * (front + back), 
-                                    critval = 20., # bins with ~20% unc
+                                    #critval = 20., # bins with ~20% unc
+                                    critval = lc_config['adaptive'],
                                     Epivot = None, # compute on the fly
             #                        tstart = config['selection']['tmin'],
             #                        tstop = config['selection']['tmax']
@@ -282,7 +286,7 @@ def main():
                 logging.error("Adaptive bins outside time window, trying catalog values for flux")
                 result = ab.time_bins(gta, texp,
                                     0.5 * (front + back), 
-                                    critval = 20., # bins with ~20% unc
+                                    critval = lc_config['adaptive'], # bins with ~20% unc
                                     Epivot = None, # compute on the fly
                                     forcecatalog = True,
             #                        tstart = config['selection']['tmin'],
@@ -305,13 +309,14 @@ def main():
                     # removing trailing zeros
                     counts = calc_counts(t,bins)
                     mcounts_post, mcounts_pre = rm_trailing_zeros(counts)
+                    logging.info("count masks: {0} {1}, bins: {2}, counts: {3}".format(mcounts_post, mcounts_pre, bins, counts))
                     counts = counts[mcounts_post & mcounts_pre]
-                    bins = np.concatenate([bins[:-1][mcounts_post & mcounts_pre],
-
-                    [bins[1:][mcounts_post & mcounts_pre].max()]])
+                    bins = np.concatenate([np.array(bins)[:-1][mcounts_post & mcounts_pre],
+                        [np.array(bins)[1:][mcounts_post & mcounts_pre].max()]])
                     logging.info("Using bins {0}, total n={1:n} bins".format(bins, len(bins)-1))
                     logging.info("bins widths : {0}".format(np.diff(bins)))
                     logging.info("counts per bin: {0} ".format(calc_counts(t,bins)))
+                    bins = list(bins)
 
 # TODO: test that this is working also with GTIs that have little or no counts
 

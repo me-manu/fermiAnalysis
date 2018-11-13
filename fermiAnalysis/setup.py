@@ -61,6 +61,8 @@ def init_gta(configfile, i = 1, logging_level = "INFO", tsmin = 100):
     # remove parameters from config file not accepted by fermipy
     for k in ['configname', 'tmp', 'log', 'fit_pars']: 
         config.pop(k,None)
+    if 'adaptive' in config['lightcurve'].keys():
+        config['lightcurve'].pop('adaptive', None)
 
     if config['data']['ltcube'] == '':
         config['data'].pop('ltcube',None)
