@@ -23,7 +23,8 @@ class XrootdSelect(object):
     of the Fermi point source analysis
     """
     fname = __module__.replace('.','/') + '.py'
-    xrdft1list = path.join(path.dirname(fermiAnalysis.__file__), 'xrootd-ft1.txt')
+    #xrdft1list = path.join(path.dirname(fermiAnalysis.__file__), 'xrootd-ft1.txt')
+    xrdft1list = path.join(path.dirname(fermiAnalysis.__file__), 'xrootd-ft1-new.txt')
 
     def __init__(self, ft1 = True):
         if ft1:

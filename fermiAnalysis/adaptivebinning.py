@@ -7,6 +7,7 @@ from astropy.table import Table
 from astropy.coordinates import SkyCoord
 from ROOT import gROOT
 import fermiAnalysis
+import time
 try:  
     print "Loading macro"
     gROOT.LoadMacro(path.join(path.dirname(fermiAnalysis.__file__),
@@ -111,11 +112,10 @@ def comp_exposure_phi(gta, energy = None):
     af, ab = np.zeros(nevt), np.zeros(nevt)
     logging.info("Calculating exposure for E = {0:.2f} MeV".format(energy))
 
+    mask = mask & (sep_zenith0.value <= gta.config['selection']['zmax'])
+    t1 = time.time()
     for i in range(nevt):
         if not mask[i]: continue
-
-        if sep_zenith0.value[i] > gta.config['selection']['zmax']:
-            continue
 
         igti = 0
 
@@ -133,6 +133,111 @@ def comp_exposure_phi(gta, energy = None):
                             float(sep_z0[i].value),
                             float(phi[i])) *livetime[i]
 
+    print ("it took {0:.2f}s".format(time.time() - t1))
+    logging.info("Done")
+    return tcen,af,ab
+
+def comp_exposure_phi_v2(gta, energy = None):
+    """
+    Compute the approximate exposure 
+
+    Parameters
+    ----------
+    gta: `~fermipy.GTAnalysis`
+        The analysis object
+
+    {options}
+
+    energy: float or None
+        The energy at which the exposure is evaluated.
+        If none, central energy from selection is used
+    """
+
+    # load the effective areas
+    irf_loader.Loader_go()
+    irfs = gta.config['gtlike']['irfs']
+    factory = irf_loader.IrfsFactory_instance()
+    fronta = factory.create(irfs + "::FRONT")
+    backa = factory.create(irfs + "::BACK")
+    aeff_fa = fronta.aeff()
+    aeff_ba = backa.aeff()
+
+    if type(energy) == type(None):
+        energy = float(np.sqrt(gta.config['selection']['emin'] * \
+                            gta.config['selection']['emax']))
+
+    # load the FT1 and FT2 files
+    ft1fits = fits.open(gta.config['data']['evfile'])
+    ft2fits = fits.open(gta.config['data']['scfile'])
+    TSTART = ft1fits['EVENTS'].header["TSTART"] - 30.
+    TSTOP = ft1fits['EVENTS'].header["TSTOP"] + 30.
+    nevt = ft2fits['SC_DATA'].header['NAXIS2']
+    src = gta.roi[gta.config['selection']['target']]
+    c0 = SkyCoord(ra = src.radec[0],dec =  src.radec[1], unit = 'deg')
+
+    # the GTIs from the FT1 file
+    ft1_gti_start = ft1fits['GTI'].data.field('START')
+    ft1_gti_stop = ft1fits['GTI'].data.field('STOP')
+
+    # central times of GTI in SC file
+    tcen = 0.5 * (ft2fits['SC_DATA'].data.field("START") + \
+                    ft2fits['SC_DATA'].data.field("STOP"))
+    mask = (tcen > TSTART) & (tcen < TSTOP)
+
+    # Spacecraft coordinates
+    cz = SkyCoord(ra = ft2fits['SC_DATA'].data.field('RA_SCZ'),
+                    dec = ft2fits['SC_DATA'].data.field('DEC_SCZ'),
+                    unit = 'deg')
+    cx = SkyCoord(ra = ft2fits['SC_DATA'].data.field('RA_SCX'),
+                    dec = ft2fits['SC_DATA'].data.field('DEC_SCX'),
+                    unit = 'deg')
+    czen = SkyCoord(ra = ft2fits['SC_DATA'].data.field('RA_ZENITH'),
+                    dec = ft2fits['SC_DATA'].data.field('DEC_ZENITH'),
+                    unit = 'deg')
+
+    sep_z0 = c0.separation(cz)
+    sep_zenith0 = c0.separation(czen)
+
+    id = np.cos(np.radians(sep_z0))
+
+    # compute phi direction to src in SC coordinates
+    phi = get_phi(cz = cz, cx = cx, c0 = c0)
+
+    # livetime
+    livetime = ft2fits['SC_DATA'].data.field('LIVETIME')
+    
+    # loop over GTIs in SC file
+    af, ab = np.zeros(nevt), np.zeros(nevt)
+    logging.info("Calculating exposure for E = {0:.2f} MeV".format(energy))
+
+    mask = mask & (sep_zenith0.value <= gta.config['selection']['zmax'])
+
+    ft1_gti_bins = np.array([ft1_gti_start, ft1_gti_stop])
+
+    igti = np.digitize(tcen, ft1_gti_start)
+
+    # make 1d array with start0,stop0,start1,stop0,...
+    ft1_gti_bins = ft1_gti_bins.T.reshape(-1)
+    # check for all times of GTI file in which bin they are. 
+    # if even, then inside a GTI if odd then outside 
+
+    #igti = np.digitize(tcen, ft1_gti_bins)
+    #mask = (igti > 0) & (igti < len(ft1_gti_bins)) & \
+            #mask & np.invert((igti - 1 % 2).astype(np.bool))
+
+    t1 = time.time()
+    for i in range(nevt):
+        if not mask[i]: continue
+
+        if tcen[i] > ft1_gti_start[igti[i] - 1] and tcen[i] < ft1_gti_stop[igti[i] - 1]:
+            af[i] = aeff_fa.value(energy,
+                            float(sep_z0[i].value),
+                            float(phi[i])) *livetime[i]
+            ab[i] = aeff_ba.value(energy,
+                            float(sep_z0[i].value),
+                            float(phi[i])) *livetime[i]
+
+    print ("it took {0:.2f}s".format(time.time() - t1))
     logging.info("Done")
     return tcen,af,ab
 
