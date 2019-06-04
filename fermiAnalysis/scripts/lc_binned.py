@@ -87,6 +87,13 @@ def main():
     parser.add_argument('--mincounts', default = 2,  
                         help='Minimum number of counts within LC bin to run analysis',
                         type=int)
+    parser.add_argument('--simulate', default = None,  
+                        help='None or full path to yaml file which contains src name' \
+                        'and spec to be simulated',
+                        )
+    parser.add_argument('--randomize', default = 1,  
+                        help='If you simulate, use Poisson realization. If false, use Asimov data set',
+                        type=int)
     args = parser.parse_args()
 
     utils.init_logging('DEBUG')
@@ -112,6 +119,10 @@ def main():
     config['fileio']['logfile'] = path.join(tmpdir,'fermipy.log')
     # debugging: all files will be saved (default is False)
     #config['fileio']['savefits'] = True
+
+    # if simulating an orbit, save fits files
+    if args.simulate is not None:
+        config['fileio']['savefits'] = True
 
     # copy all fits files already present in outdir
     # run the analysis
@@ -378,14 +389,14 @@ def main():
             logging.info('Running sed for {0[target]:s}'.format(config['selection']))
             sed = gta.sed(config['selection']['target'],
                         prefix = 'lc_sed',
-                        #outfile = 'sed.fits',
-                        #free_radius = sed_config['free_radius'],
-                        #free_background= sed_config['free_background'],
-                        free_pars = fa.allnorm
-                        #make_plots = sed_config['make_plots'],
-                        #cov_scale = sed_config['cov_scale'],
-                        #use_local_index = sed_config['use_local_index'],
-                        #bin_index = sed_config['bin_index']
+                        free_radius = None if config['sed']['free_radius'] == 0. \
+                            else config['sed']['free_radius'],
+                        free_background= config['sed']['free_background'],
+                        free_pars = fa.allnorm,
+                        make_plots = config['sed']['make_plots'],
+                        cov_scale = config['sed']['cov_scale'],
+                        use_local_index = config['sed']['use_local_index'],
+                        bin_index = config['sed']['bin_index']
                         )
 
     # debugging: calculate sed and resid maps for each light curve bin
@@ -397,6 +408,39 @@ def main():
         if args.srcprob:
             logging.info("Running srcprob with srcmdl {0:s}".format('lc'))
             gta.compute_srcprob(xmlfile = 'lc', overwrite = True)
+
+        # simulate a source 
+        if args.simulate is not None:
+            with open(args.simulate) as f:
+                simsource = np.load(f).flat[0]
+
+            # set the source to the simulation value
+            gta.set_source_spectrum(simsource['target'],
+                spectrum_type = simsource['spectrum_type'],
+                spectrum_pars = simsource['spectrum_pars'][job_id - 1])
+
+            logging.info("changed spectral parameters to {0}".format(
+                gta.roi.get_source_by_name(simsource['target']).spectral_pars))
+
+            # simulate the ROI
+            gta.simulate_roi(randomize = bool(args.randomize))
+            # freeze spectral shapes
+            #gta.free_sources(free = False, pars = fa.allidx + fa.allnorm)
+            # Free parameters of central source
+            gta.free_source(config['selection']['target'],
+                pars = config['lightcurve']['free_params'])
+            # Free Normalization of all Sources within X deg of ROI center
+            #gta.free_sources(distance=0.5,pars=fa.allnorm)
+            # Fix spectral shape parameters of central source
+            #gta.free_source(config['selection']['target'],
+            #    pars = fa.allidx,
+            #    free = False)
+                
+            # fit the simulation
+            f = gta.fit()
+            gta, f = refit(gta, config['selection']['target'],f, fit_config['ts_fixed'])
+            gta.print_roi()
+            gta.write_roi('lc_simulate_{0:s}'.format(simsource['suffix']))
     return gta 
 
 if __name__ == '__main__':

@@ -4,6 +4,9 @@ import argparse
 import shlex
 import fermiAnalysis as fa
 from subprocess import call
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 from fermiAnalysis import setup
 from fermiAnalysis import xrootd
 from fermiAnalysis.utils import set_free_pars_avg,fit_with_retries

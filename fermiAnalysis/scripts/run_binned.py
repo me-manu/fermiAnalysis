@@ -5,7 +5,7 @@ from fermipy.gtanalysis import GTAnalysis
 from gammapy.maps import WcsNDMap
 from os import path
 import logging
-from haloanalysis.batchfarm import utils,lsf
+from fermiAnalysis.batchfarm import utils,lsf
 import fermiAnalysis as fa
 import argparse
 import yaml
@@ -18,6 +18,7 @@ import astropy.units as u
 from fermiAnalysis import setup
 from fermiAnalysis.utils import set_free_pars_avg,fit_with_retries
 from fermiAnalysis.utils import set_src_spec_pl, set_src_spec_plexpcut
+from fermiAnalysis.utils import compute_profile2d, get_best_fit_covar
 from fermiAnalysis.prepare import PreparePointSource 
 
 def main():
@@ -61,6 +62,12 @@ def main():
                         type=int)
     parser.add_argument('--pivotE_free', default = 0,  
                         help='let the pivot energy free during fit if spectrum is changed',
+                        type=int)
+    parser.add_argument('--forcepl', default = 0,  
+                        help='Force the target source to have power-law shape',
+                        type=int)
+    parser.add_argument('--profile2d', default = 0,  
+                        help='Compute 2D likelihood surface for PL index and normalization',
                         type=int)
     args = parser.parse_args()
 
@@ -189,12 +196,19 @@ def main():
 
         if args.state.find('ebl') >= 0:
             gta = fa.utils.add_ebl_atten(gta,config['selection']['target'],fit_config['z'])
+            
+        if args.forcepl and not \
+            gta.roi.get_source_by_name(config['selection']['target'])['SpectrumType'] == 'PowerLaw':
+
+            gta = set_src_spec_pl(gta, gta.get_source_name(config['selection']['target']))
+            args.state += "_pl"
 
         gta = set_free_pars_avg(gta, fit_config, freezesupexp = args.freezesupexp)
         f,gta = fit_with_retries(gta, fit_config, config['selection']['target'], 
                                     alt_spec_pars = old_spec_pars)
 
         logging.debug(f)
+        get_best_fit_covar(gta, config['selection']['target'], prefix = args.state)
 
         #relocalize central source and refit
         if args.relocalize and type(config['selection']['target']) == str:
@@ -333,78 +347,9 @@ def main():
                         #bin_index = sed_config['bin_index']
                         )
 
-    # run the analysis for the full flare durations
-    #if args.state == 'fullflare-avg':
-    #if args.state.find('-avg') >= 0:
-        ## stage the full time array analysis results to the tmp dir
-        ## do not copy png images
-        #files = [fn for fn in glob(fit_config['avgspec']) if fn.find('.xml') > 0 or fn.find('.npy') > 0]
-        #utils.copy2scratch(files, gta.workdir)
-#
-        #if args.state == 'fullflare-avg':
-            #gta.load_roi('avgspec') # reload the average spectral fit
-        #elif args.state == 'gtiflare-avg':
-            #gta.load_roi('fullflare-avg') # reload the average spectral fit
-#
-        #o = gta.optimize() # perform an initial fit
-        #logging.debug(o)
-        #gta.print_roi()
-#
-        ## Free all parameters of all Sources within X deg of ROI center
-        ##gta.free_sources(distance=fit_config['ps_dist_all'])
-        ## Free Normalization of all Sources within X deg of ROI center
-        #gta.free_sources(distance=fit_config['ps_dist_norm_fullflare'],pars=fa.allnorm)
-        ## Free spectra parameters of all Sources within X deg of ROI center
-        #gta.free_sources(distance=fit_config['ps_dist_idx_fullflare'],pars=fa.allidx)
-        ## Free all parameters of isotropic and galactic diffuse components
-        #gta.free_source('galdiff', pars= fa.allnorm, free = fit_config['gal_norm_free_fullflare'])
-        #gta.free_source('galdiff', pars= fa.allidx, free = fit_config['gal_idx_free_fullflare'])
-        #gta.free_source('isodiff', pars= fa.allnorm, free = fit_config['iso_norm_free_fullflare'])
-        ## Free sources with TS > X
-        #gta.free_sources(minmax_ts=[fit_config['ts_norm'],None], pars = fa.allnorm)
-        ## Fix sources with TS < Y
-        #gta.free_sources(minmax_ts=[None,fit_config['ts_fixed']],free=False,
-                            #pars=fa.allidx + fa.allnorm)
-        ## Fix indeces for sources with TS < Z
-        #gta.free_sources(minmax_ts=[None,fit_config['ts_fixed_idx']],free=False,
-                #pars = fa.allidx)
-        ## Fix sources Npred < Z
-        #gta.free_sources(minmax_npred=[None,fit_config['npred_fixed']],free=False,
-                            #pars=fa.allidx + fa.allnorm)
-#
-        ## gives "failed to create spline" in get_parameter_limits function
-        ##gta = fa.utils.add_ebl_atten(gta,config['selection']['target'],fit_config['z'])
-        #logging.info('free source parameters:')
-        #for s in  gta.get_sources() :                                                           
-            #for k in s.spectral_pars.keys():
-                #if s.spectral_pars[k]['free']:   
-                    #logging.info('{0:s}: {1:s}'.format(s.name, k))
-        #f = gta.fit()
-#
-        #retries = f['config']['retries']
-        #tsfix = fit_config['ts_fixed']
-        #while not f['fit_success'] and retries > 0:
-            #gta.free_source(config['selection']['target'], pars = ['beta', 'Index2'], free = False)
-            ## Fix more sources
-            #tsfix *= 3
-            #gta.free_sources(minmax_ts=[None,tsfix],free=False,
-                            #pars=fa.allidx + fa.allnorm)
-            #logging.info("retrying fit")
-            #for s in  gta.get_sources() :                                                           
-                #for k in s.spectral_pars.keys():
-                    #if s.spectral_pars[k]['free']:   
-                        #logging.info('{0:s}: {1:s}'.format(s.name, k))
-            #o = gta.optimize()
-            #gta.print_roi()
-            #f = gta.fit()
-            #retries -= 1
-#
-        #gta.write_roi(args.state)
-#
-        #logging.info('Running sed for {0[target]:s}'.format(config['selection']))
-        #sed = gta.sed(config['selection']['target'], prefix = args.state)
-        #model = {'Scale': 1000., 'Index' : fit_config['new_src_pl_index'], 'SpatialModel' : 'PointSource'}
-        #resid_maps = gta.residmap(args.state,model=model, make_plots=True, write_fits = True, write_npy = True)
+    if args.profile2d:
+        compute_profile2d(gta, config['selection']['target'], prefix = args.state, 
+            sigma = 5., xsteps = 30, ysteps = 31)
     return gta
 
 if __name__ == '__main__':
