@@ -14,7 +14,6 @@ from time import sleep
 from numpy import string_
 from subprocess import check_call
 import logging
-#import cPickle as pickle
 import pickle
 import gzip
 # -------------------------- #
@@ -34,7 +33,6 @@ def save(object, filename, protocol = -1):
     protocol:        int, see Pickler documentation
     """
     file = gzip.GzipFile(filename, 'wb')
-    #cPickle.dump(object, file, protocol)
     pickle.dump(object, file, protocol)
     file.close()
 
@@ -51,7 +49,6 @@ def load(filename):
     The loaded object.
     """
     file = gzip.GzipFile(filename, 'rb')
-    #object = cPickle.load(file)
     object = pickle.load(file)
     file.close()
 

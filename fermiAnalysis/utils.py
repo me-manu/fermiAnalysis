@@ -568,160 +568,129 @@ def add_ebl_atten(gta, src, z, eblmodel = 'dominguez', force_lp= False):
     logging.info('New source parameters are: {0}'.format(gta.roi.get_source_by_name(src).spectral_pars))
     return gta
 
+def add_column(columns, fitsfile, hdu, createsedlc = False):
+    with fits.open(fitsfile) as f:
+
+        if hdu == 'CATALOG':
+            idx = np.argmin(f[hdu].data['offset']) # index of central source
+            s = slice(idx,idx+1)
+
+            if createsedlc:
+                fsed = glob(path.join(path.dirname(fi), 'lc_sed*.fits'))
+                if not len(fsed):
+                    logging.warning("No SED file in {0:s}".format(path.join(path.dirname(fi), 'lc_sed*.fits')))
+                    continue
+                tsed = Table.read(fsed[0])
+                columns['emin_sed'].append(tsed['e_min'].data)
+                columns['emax_sed'].append(tsed['e_max'].data)
+                columns['eref_sed'].append(tsed['e_ref'].data)
+                columns['norm'].append(tsed['norm'].data)
+                columns['norm_err'].append(tsed['norm_err'].data)
+                columns['norm_errp'].append(tsed['norm_errp'].data)
+                columns['norm_errn'].append(tsed['norm_errn'].data)
+                columns['norm_ul'].append(tsed['norm_ul'].data)
+                columns['ts_sed'].append(tsed['ts'].data)
+                columns['ref_dnde'].append(tsed['ref_dnde'].data)
+                columns['ref_flux'].append(tsed['ref_flux'].data)
+                columns['ref_eflux'].append(tsed['ref_eflux'].data)
+                columns['ref_npred'].append(tsed['ref_npred'].data)
+                columns['norm_scan'].append(tsed['norm_scan'].data)
+                columns['dloglike_scan'].append(tsed['dloglike_scan'].data)
+                del tsed
+
+
+            c = yaml.load(f[0].header['CONFIG'])
+            columns['tmin'].append(c['selection']['tmin'])
+            columns['tmax'].append(c['selection']['tmax'])
+            columns['emin'].append(c['selection']['emin'])
+            columns['emax'].append(c['selection']['emax'])
+            columns['param_names'].append(np.squeeze(f[hdu].data['param_names'][s]))
+            columns['param_values'].append(np.squeeze(f[hdu].data['param_values'][s]))
+            columns['param_errors'].append(np.squeeze(f[hdu].data['param_errors'][s]))
+            columns['npred'].append(np.squeeze(f[hdu].data['npred'][s]))
+            columns['ts'].append(np.squeeze(f[hdu].data['npred'][s]))
+            columns['eflux_err'].append(np.squeeze(f[hdu].data['eflux_err'][s]))
+            columns['eflux'].append(np.squeeze(f[hdu].data['eflux'][s]))
+            columns['flux_err'].append(np.squeeze(f[hdu].data['flux_err'][s]))
+            columns['flux'].append(np.squeeze(f[hdu].data['flux'][s]))
+
+        elif hdu == 'LIGHTCURVE':
+            s = slice(f[hdu].data.size)
+            columns['tmin'] = np.concatenate([columns['tmin'], f[hdu].data['tmin'][s]])
+            columns['tmax'] = np.concatenate([columns['tmax'], f[hdu].data['tmax'][s]])
+            columns['emin'] = np.concatenate([columns['emin'], np.zeros_like(f[hdu].data['tmin'][s])])
+            columns['emax'] = np.concatenate([columns['emax'], np.zeros_like(f[hdu].data['tmin'][s])])
+            columns['npred'] = np.concatenate([columns['npred'], f[hdu].data['npred'][s]])
+            columns['ts'] = np.concatenate([columns['ts'], f[hdu].data['ts'][s]])
+            columns['eflux_err'] = np.concatenate([columns['eflux_err'], f[hdu].data['eflux_err'][s]])
+            columns['eflux'] = np.concatenate([columns['eflux'], f[hdu].data['eflux'][s]])
+            columns['flux_err'] = np.concatenate([columns['flux_err'], f[hdu].data['flux_err'][s]])
+            columns['flux'] = np.concatenate([columns['flux'], f[hdu].data['flux'][s]])
+            columns['param_names'] = np.vstack([columns['param_names'],f[hdu].data['param_names'][s]])
+            columns['param_values'] = np.vstack([columns['param_values'],f[hdu].data['param_values'][s]])
+            columns['param_errors'] = np.vstack([columns['param_errors'],f[hdu].data['param_errors'][s]])
+            if 'flux_fixed' in f[hdu].columns.names:
+                columns['eflux_err_fixed'] = np.concatenate([columns['eflux_err_fixed'], f[hdu].data['eflux_err_fixed'][s]])
+                columns['eflux_fixed'] = np.concatenate([columns['eflux_fixed'], f[hdu].data['eflux_fixed'][s]])
+                columns['flux_err_fixed'] = np.concatenate([columns['flux_err_fixed'], f[hdu].data['flux_err_fixed'][s]])
+                columns['flux_fixed'] = np.concatenate([columns['flux_fixed'], f[hdu].data['flux_fixed'][s]])
+                columns['ts_fixed'] = np.concatenate([columns['ts_fixed'], f[hdu].data['ts_fixed'][s]])
+
+        for h in f:
+            del h.data
+        del f
+
+    return columns
+
 def collect_lc_results(outfiles, hdu = "CATALOG",
                                 createsedlc = False):
 
     ff = glob(outfiles)
     ff = sorted(ff, key = lambda f: int(path.dirname(f).split('/')[-1]))
     logging.debug('collecting results from {0:n} files'.format(len(ff)))
-    tmin, tmax = [],[]
-    emin, emax = [],[]
-    npred,ts,eflux,eflux_err,flux,flux_err = [],[],[],[],[],[]
-    param_names, param_values, param_errors = [],[],[]
-    if createsedlc: 
-        emin_sed = []
-        emax_sed = []
-        eref_sed = []
-        norm = []
-        norm_err = []
-        norm_errp = []
-        norm_errn = []
-        norm_ul = []
-        ts_sed = []
-        ref_dnde = []
-        ref_flux = []
-        ref_eflux = []
-        ref_npred = []
-        norm_scan = []
-        dloglike_scan = []
 
-    for i,fi in enumerate(ff):
-        logging.debug('Opening {0:s}'.format(fi))
+    columns = dict(tmin = [], tmax = [],
+                    emin = [], emax = [],
+                    npred = [], ts = [], eflux = [],
+                    eflux_err = [],flux = [],flux_err = [],
+                    param_names = [], param_values = [], param_errors = [])
+    if createsedlc:
+        columns.update(dict(
+                    emin_sed = [],
+                    emax_sed = [],
+                    eref_sed = [],
+                    norm = [],
+                    norm_err = [],
+                    norm_errp = [],
+                    norm_errn = [],
+                    norm_ul = [],
+                    ts_sed = [],
+                    ref_dnde = [],
+                    ref_flux = [],
+                    ref_eflux = [],
+                    ref_npred = [],
+                    norm_scan = [],
+                    dloglike_scan = []))
 
-        with fits.open(fi) as f:
-
-            if hdu == 'CATALOG':
-                idx = np.argmin(f[hdu].data['offset']) # index of central source
-                s = slice(idx,idx+1)
-
-                if createsedlc: 
-                    fsed = glob(path.join(path.dirname(fi), 'lc_sed*.fits'))
-                    if not len(fsed):
-                        logging.warning("No SED file in {0:s}".format(path.join(path.dirname(fi), 'lc_sed*.fits')))
-                        continue
-# TODO implement for arbirtrary number of energy bins
-                    tsed = Table.read(fsed[0])
-                    emin_sed.append(tsed['e_min'])
-                    emax_sed.append(tsed['e_max'])
-                    eref_sed.append(tsed['e_ref'])
-                    norm.append(tsed['norm'])
-                    norm_err.append(tsed['norm_err'])
-                    norm_errp.append(tsed['norm_errp'])
-                    norm_errn.append(tsed['norm_errn'])
-                    norm_ul.append(tsed['norm_ul'])
-                    ts_sed.append(tsed['ts'])
-                    ref_dnde.append(tsed['ref_dnde'])
-                    ref_flux.append(tsed['ref_flux'])
-                    ref_eflux.append(tsed['ref_eflux'])
-                    ref_npred.append(tsed['ref_npred'])
-                    norm_scan.append(tsed['norm_scan'])
-                    dloglike_scan.append(tsed['dloglike_scan'])
-                    del tsed
-
-
-                c = yaml.load(f[0].header['CONFIG'])
-                tmin.append(c['selection']['tmin'])
-                tmax.append(c['selection']['tmax'])
-                emin.append(c['selection']['emin'])
-                emax.append(c['selection']['emax'])
-                param_names.append(np.squeeze(f[hdu].data['param_names'][s]))
-                param_values.append(np.squeeze(f[hdu].data['param_values'][s]))
-                param_errors.append(np.squeeze(f[hdu].data['param_errors'][s]))
-                npred.append(np.squeeze(f[hdu].data['npred'][s]))
-                ts.append(np.squeeze(f[hdu].data['npred'][s]))
-                eflux_err.append(np.squeeze(f[hdu].data['eflux_err'][s]))
-                eflux.append(np.squeeze(f[hdu].data['eflux'][s]))
-                flux_err.append(np.squeeze(f[hdu].data['flux_err'][s]))
-                flux.append(np.squeeze(f[hdu].data['flux'][s]))
-
-
-                
-            elif hdu == 'LIGHTCURVE':
-                s = slice(f[hdu].data.size)
-                if not i:
-                    tmax = f[hdu].data['tmax'][s]
-                    tmin = f[hdu].data['tmin'][s]
-                    emax = np.zeros_like(tmin) # not given in light curve case
-                    emin = np.zeros_like(tmin) # not given in light curve case
-                else:
-                    tmin = np.concatenate([tmin, f[hdu].data['tmin'][s]])
-                    tmax = np.concatenate([tmax, f[hdu].data['tmax'][s]])
-                    emin = np.concatenate([emin, np.zeros_like(f[hdu].data['tmin'][s])])
-                    emax = np.concatenate([emax, np.zeros_like(f[hdu].data['tmin'][s])])
-
-                if not i:
-                    npred = f[hdu].data['npred'][s]
-                    eflux_err = f[hdu].data['eflux_err'][s]
-                    ts = f[hdu].data['ts'][s]
-                    eflux = f[hdu].data['eflux'][s]
-                    flux_err = f[hdu].data['flux_err'][s]
-                    flux = f[hdu].data['flux'][s]
-                    param_names = f[hdu].data['param_names'][s]
-                    param_values = f[hdu].data['param_values'][s]
-                    param_errors = f[hdu].data['param_errors'][s]
-                    if 'flux_fixed' in f[hdu].columns.names:
-                        ts_fixed = f[hdu].data['ts_fixed'][s]
-                        flux_fixed = f[hdu].data['flux_fixed'][s]
-                        flux_err_fixed = f[hdu].data['flux_err_fixed'][s]
-                        eflux_err_fixed = f[hdu].data['eflux_err_fixed'][s]
-                        eflux_fixed = f[hdu].data['eflux_fixed'][s]
-                else:
-                    npred = np.concatenate([npred, f[hdu].data['npred'][s]])
-                    ts = np.concatenate([ts, f[hdu].data['ts'][s]])
-                    eflux_err = np.concatenate([eflux_err, f[hdu].data['eflux_err'][s]])
-                    eflux = np.concatenate([eflux, f[hdu].data['eflux'][s]])
-                    flux_err = np.concatenate([flux_err, f[hdu].data['flux_err'][s]])
-                    flux = np.concatenate([flux, f[hdu].data['flux'][s]])
-                    param_names = np.vstack([param_names,f[hdu].data['param_names'][s]])
-                    param_values = np.vstack([param_values,f[hdu].data['param_values'][s]])
-                    param_errors = np.vstack([param_errors,f[hdu].data['param_errors'][s]])
-                    if 'flux_fixed' in f[hdu].columns.names:
-                        eflux_err_fixed = np.concatenate([eflux_err_fixed, f[hdu].data['eflux_err_fixed'][s]])
-                        eflux_fixed = np.concatenate([eflux_fixed, f[hdu].data['eflux_fixed'][s]])
-                        flux_err_fixed = np.concatenate([flux_err_fixed, f[hdu].data['flux_err_fixed'][s]])
-                        flux_fixed = np.concatenate([flux_fixed, f[hdu].data['flux_fixed'][s]])
-                        ts_fixed = np.concatenate([ts_fixed, f[hdu].data['ts_fixed'][s]])
-            try:
-                column_names
-            except NameError:
-                column_names = f[hdu].columns.names
-
-        print i
-        for h in f:
-            del h.data 
+    with fits.open(ff[0]) as f:
+        if 'flux_fixed' in f[hdu].columns.names:
+            columns.update(dict(ts_fixed = [],
+            flux_fixed = [],
+            flux_err_fixed  = [],
+            eflux_err_fixed  = [],
+            eflux_fixed = []
+            ))
         del f
 
-    tmin = np.squeeze(met_to_mjd(np.array(tmin)))
-    tmax = np.squeeze(met_to_mjd(np.array(tmax)))
+    for i,fi in enumerate(ff):
 
-    data = [tmin, tmax, emin, emax, ts, npred, eflux, eflux_err,
-                flux, flux_err, param_names, param_values, param_errors]
-    names = ['tmin', 'tmax', 'emin', 'emax', 'ts', 'npred', 'eflux', 'eflux_err', 
-                    'flux', 'flux_err', 'param_names', 'param_values', 'param_errors']
+        columns = add_columns(columns, fi, createsedlc = createsedlc)
+        logging.debug('Opening {0:s}'.format(fi))
 
-    if 'flux_fixed' in column_names:
-        data += [eflux_fixed, eflux_err_fixed, flux_fixed, flux_err_fixed, ts_fixed]
-        names += ['eflux_fixed', 'eflux_err_fixed', 'flux_fixed', 'flux_err_fixed', 'ts_fixed']
+    columns['tmin'] = np.squeeze(met_to_mjd(np.array(columns['tmin'])))
+    columns['tmax'] = np.squeeze(met_to_mjd(np.array(columns['tmax'])))
 
-    if createsedlc:
-        data += [emin_sed,emax_sed,eref_sed,norm_scan,dloglike_scan,
-                    norm,norm_ul,norm_errp,norm_errn,norm_err,
-                    ref_dnde,ref_flux,ref_eflux,ref_npred,ts_sed]
-        names += ['emin_sed','emax_sed','eref_sed','norm_scan','dloglike_scan',
-                    'norm','norm_ul','norm_errp','norm_errn','norm_err',
-                    'ref_dnde','ref_flux','ref_eflux','ref_npred','ts_sed']
-
-    t = Table(data,names = names)
+    t = Table(columns)
     t['tmin'].unit = 'MJD'
     t['tmax'].unit = 'MJD'
     t['emin'].unit = 'MeV'
