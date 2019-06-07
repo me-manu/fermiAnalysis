@@ -1,7 +1,6 @@
 import numpy as np
 from glob import glob
 from astropy.io import fits
-from astropy.table import Table
 import logging
 import yaml
 from astropy.table import Table
@@ -12,6 +11,46 @@ from LikelihoodState import LikelihoodState
 import fermiAnalysis as fa 
 import subprocess
 import copy
+from fermiAnalysis import adaptivebinning as ab
+
+def calculate_exposure(srcconf,earray):
+    """
+    Calculate the Fermi LAT exposure
+
+    :param srcconf:
+    dict, source configuration
+    :return:
+    tuple with array-like objects for time, front, and back exposure
+    """
+    texp_file = path.join(srcconf['fileio']['outdir'],
+                          "exposure_{0[emin]:n}-{0[emax]:n}MeV.npz".format(srcconf['selection']))
+
+    if path.isfile(texp_file):
+
+        npzfile = np.load(texp_file)
+        texp, front, back = npzfile['texp'], npzfile['front'], npzfile['back']
+        logging.info("loaded exposure from {0:s}".format(texp_file))
+
+    else:
+        # get the gta object
+        config = myconf2fermipy(srcconf)
+        config['fileio']['scratchdir'] = None
+        config['fileio']['usescratch'] = False
+        gta = GTAnalysis(config, logging={'verbosity': 3})
+
+        front, back = [], []
+        for energy in earray:
+            texp, f, b = ab.comp_exposure_phi(gta, energy=energy)
+            front.append(f)
+            back.append(f)
+
+        front = np.array(front)
+        back = np.array(back)
+        np.savez(texp_file, texp=texp, front=front,
+                 back=back, earray=earray)
+        logging.info("Saved exposure to {0:s}".format(texp_file))
+
+    return texp, front, back
 
 def excise_solar_flares_grbs(tsmin = 100.,
     sf_file = "/u/gl/omodei/SunMonitor_P8/SUN-ORB-TEST/SUN-ORB-TEST_jean.txt",
