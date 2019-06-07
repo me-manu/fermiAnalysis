@@ -14,7 +14,7 @@ from time import sleep
 from numpy import string_
 from subprocess import check_call
 import logging
-import pickle 
+import pickle
 import gzip
 # -------------------------- #
 
