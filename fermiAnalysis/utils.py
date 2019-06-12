@@ -568,7 +568,7 @@ def add_ebl_atten(gta, src, z, eblmodel = 'dominguez', force_lp= False):
     logging.info('New source parameters are: {0}'.format(gta.roi.get_source_by_name(src).spectral_pars))
     return gta
 
-def add_column(columns, fitsfile, hdu, createsedlc = False):
+def add_columns(columns, fitsfile, hdu, createsedlc = False):
     with fits.open(fitsfile) as f:
 
         if hdu == 'CATALOG':
@@ -579,24 +579,24 @@ def add_column(columns, fitsfile, hdu, createsedlc = False):
                 fsed = glob(path.join(path.dirname(fi), 'lc_sed*.fits'))
                 if not len(fsed):
                     logging.warning("No SED file in {0:s}".format(path.join(path.dirname(fi), 'lc_sed*.fits')))
-                    continue
-                tsed = Table.read(fsed[0])
-                columns['emin_sed'].append(tsed['e_min'].data)
-                columns['emax_sed'].append(tsed['e_max'].data)
-                columns['eref_sed'].append(tsed['e_ref'].data)
-                columns['norm'].append(tsed['norm'].data)
-                columns['norm_err'].append(tsed['norm_err'].data)
-                columns['norm_errp'].append(tsed['norm_errp'].data)
-                columns['norm_errn'].append(tsed['norm_errn'].data)
-                columns['norm_ul'].append(tsed['norm_ul'].data)
-                columns['ts_sed'].append(tsed['ts'].data)
-                columns['ref_dnde'].append(tsed['ref_dnde'].data)
-                columns['ref_flux'].append(tsed['ref_flux'].data)
-                columns['ref_eflux'].append(tsed['ref_eflux'].data)
-                columns['ref_npred'].append(tsed['ref_npred'].data)
-                columns['norm_scan'].append(tsed['norm_scan'].data)
-                columns['dloglike_scan'].append(tsed['dloglike_scan'].data)
-                del tsed
+                else:
+                    tsed = Table.read(fsed[0])
+                    columns['emin_sed'].append(tsed['e_min'].data)
+                    columns['emax_sed'].append(tsed['e_max'].data)
+                    columns['eref_sed'].append(tsed['e_ref'].data)
+                    columns['norm'].append(tsed['norm'].data)
+                    columns['norm_err'].append(tsed['norm_err'].data)
+                    columns['norm_errp'].append(tsed['norm_errp'].data)
+                    columns['norm_errn'].append(tsed['norm_errn'].data)
+                    columns['norm_ul'].append(tsed['norm_ul'].data)
+                    columns['ts_sed'].append(tsed['ts'].data)
+                    columns['ref_dnde'].append(tsed['ref_dnde'].data)
+                    columns['ref_flux'].append(tsed['ref_flux'].data)
+                    columns['ref_eflux'].append(tsed['ref_eflux'].data)
+                    columns['ref_npred'].append(tsed['ref_npred'].data)
+                    columns['norm_scan'].append(tsed['norm_scan'].data)
+                    columns['dloglike_scan'].append(tsed['dloglike_scan'].data)
+                    del tsed
 
 
             c = yaml.load(f[0].header['CONFIG'])
@@ -684,7 +684,7 @@ def collect_lc_results(outfiles, hdu = "CATALOG",
 
     for i,fi in enumerate(ff):
 
-        columns = add_columns(columns, fi, createsedlc = createsedlc)
+        columns = add_columns(columns, fi, hdu = hdu, createsedlc = createsedlc)
         logging.debug('Opening {0:s}'.format(fi))
 
     columns['tmin'] = np.squeeze(met_to_mjd(np.array(columns['tmin'])))

@@ -32,7 +32,9 @@ lsfDefaults = {
     'lsb_steps':1,
     'logdir':'./log',
     'tmpdir':'./tmp',
-    'max_rjobs': None
+    'max_rjobs': None,
+    'nminjob':None, 
+    'nmaxjob':None
 }
 
 def setLsf(func):
@@ -83,7 +85,7 @@ def init_lsf(local_id = 0):
     """
 
     try:
-        environ.keys().index("LSB_JOBNAME")
+        list(environ.keys()).index("LSB_JOBNAME")
         job_id                = int(environ["LSB_JOBINDEX"])
         tmpdir                = mkdir(join('/scratch/{0:s}.{1:s}/'.format(environ['USER'],environ["LSB_JOBID"])))
         logging.info('os.listdir: {0}'.format(listdir(tmpdir)))
@@ -251,6 +253,10 @@ def submit_lsf(script,config,option,njobs,**kwargs):
         if not kwargs['dependency'] == None:
             command += """-w "ended({0[dependency]:s})" """.format(kwargs)
 
+        # exclude some clusters
+        command += """ -R "select[rhel60]" """
+        #command += """ -R "select[fell]" """
+
         command += """ {0:s} """.format(bashScript)
 
         # get the current number of running jobs
@@ -263,6 +269,7 @@ def submit_lsf(script,config,option,njobs,**kwargs):
                 logging.info('Sleep for {0:.2f} s ...'.format(kwargs['sleep'] * 3.))
                 sleep(kwargs['sleep'] * 3.)
                 rjobs = get_running_jobs()
+
 
         if not kwargs['dry']:
             logging.info('Sending command\n\t{0:s}\nto lsf cluster'.format(command))
