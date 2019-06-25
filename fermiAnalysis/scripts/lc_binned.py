@@ -412,7 +412,7 @@ def main():
         # simulate a source 
         if args.simulate is not None:
             with open(args.simulate) as f:
-                simsource = np.load(f).flat[0]
+                simsource = np.load(f, allow_pickle = True).flat[0]
 
             # set the source to the simulation value
             gta.set_source_spectrum(simsource['target'],

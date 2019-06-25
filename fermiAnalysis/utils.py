@@ -11,6 +11,7 @@ from LikelihoodState import LikelihoodState
 import fermiAnalysis as fa 
 import subprocess
 import copy
+import string
 from fermiAnalysis import adaptivebinning as ab
 
 def calculate_exposure(srcconf,earray):
@@ -607,7 +608,7 @@ def add_ebl_atten(gta, src, z, eblmodel = 'dominguez', force_lp= False):
     logging.info('New source parameters are: {0}'.format(gta.roi.get_source_by_name(src).spectral_pars))
     return gta
 
-def add_columns(columns, fitsfile, hdu, createsedlc = False):
+def add_columns(columns, fitsfile, hdu, createsedlc = False, sedname = 'lc_sed*.fits'):
     with fits.open(fitsfile) as f:
 
         if hdu == 'CATALOG':
@@ -615,9 +616,10 @@ def add_columns(columns, fitsfile, hdu, createsedlc = False):
             s = slice(idx,idx+1)
 
             if createsedlc:
-                fsed = glob(path.join(path.dirname(fi), 'lc_sed*.fits'))
+                fsed = glob(path.join(path.dirname(fitsfile), sedname))
                 if not len(fsed):
-                    logging.warning("No SED file in {0:s}".format(path.join(path.dirname(fi), 'lc_sed*.fits')))
+                    logging.warning("No SED file in {0:s}, returning".format(path.join(path.dirname(fitsfile), sedname)))
+                    return columns
                 else:
                     tsed = Table.read(fsed[0])
                     columns['emin_sed'].append(tsed['e_min'].data)
@@ -633,6 +635,7 @@ def add_columns(columns, fitsfile, hdu, createsedlc = False):
                     columns['ref_flux'].append(tsed['ref_flux'].data)
                     columns['ref_eflux'].append(tsed['ref_eflux'].data)
                     columns['ref_npred'].append(tsed['ref_npred'].data)
+                    columns['loglike'].append(tsed['loglike'].data)
                     columns['norm_scan'].append(tsed['norm_scan'].data)
                     columns['dloglike_scan'].append(tsed['dloglike_scan'].data)
                     del tsed
@@ -681,11 +684,19 @@ def add_columns(columns, fitsfile, hdu, createsedlc = False):
 
     return columns
 
-def collect_lc_results(outfiles, hdu = "CATALOG",
+def collect_lc_results(outfiles, hdu = "CATALOG", stripstring = '', sedname = 'lc_sed*.fits',
+                                sedname_fixed = True, sortdir = True, 
                                 createsedlc = False):
 
-    ff = glob(outfiles)
-    ff = sorted(ff, key = lambda f: int(path.dirname(f).split('/')[-1]))
+    ff = glob(outfiles.replace('*', '[!coverage]*[!sed]'))
+    if sortdir:
+        ff = sorted(ff, key = lambda f: int(path.dirname(f).split('/')[-1].replace(stripstring,'')))
+    else:
+        # use translate method to get rid of all characters except digits
+        # see https://stackoverflow.com/questions/1450897/python-removing-characters-except-digits-from-string
+        all=string.maketrans('','')
+        nodigs=all.translate(all, string.digits)
+        ff = sorted(ff, key = lambda f: int(path.basename(f).split('.')[-2].translate(all, nodigs)))
     logging.debug('collecting results from {0:n} files'.format(len(ff)))
 
     columns = dict(tmin = [], tmax = [],
@@ -709,9 +720,11 @@ def collect_lc_results(outfiles, hdu = "CATALOG",
                     ref_eflux = [],
                     ref_npred = [],
                     norm_scan = [],
+                    loglike = [],
                     dloglike_scan = []))
 
     with fits.open(ff[0]) as f:
+
         if 'flux_fixed' in f[hdu].columns.names:
             columns.update(dict(ts_fixed = [],
             flux_fixed = [],
@@ -723,7 +736,8 @@ def collect_lc_results(outfiles, hdu = "CATALOG",
 
     for i,fi in enumerate(ff):
 
-        columns = add_columns(columns, fi, hdu = hdu, createsedlc = createsedlc)
+        columns = add_columns(columns, fi, hdu = hdu, createsedlc = createsedlc,
+            sedname = sedname if sedname_fixed else path.basename(fi).replace('.fits','*_sed.fits'))
         logging.debug('Opening {0:s}'.format(fi))
 
     columns['tmin'] = np.squeeze(met_to_mjd(np.array(columns['tmin'])))
