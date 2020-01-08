@@ -3,7 +3,7 @@ Utility functions for sumbmission to an lsf cluster
 """
 
 # --- imports ------------------ #
-import yaml
+#import yaml
 import shlex
 import logging
 import fermiAnalysis.batchfarm as bf
@@ -14,6 +14,7 @@ from os import environ,system,access,R_OK,listdir
 from os.path import *
 from numpy import string_
 from numpy.random import randint
+from astropy.io.misc import yaml
 # ------------------------------ #
 lsfDefaults = {
     'queue': 'time',
@@ -99,7 +100,7 @@ def init_lsf(local_id = 0):
         logging.info('out: {0}'.format(out))
         logging.info('err: {0}'.format(err))
 
-        tmpdir                = join('/scratch',out.split()[0])
+        tmpdir                = join('/scratch',out.decode('ascii').split()[0])
         sleep(20.)
     except ValueError:
         job_id                     = local_id

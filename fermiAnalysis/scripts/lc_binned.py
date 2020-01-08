@@ -271,6 +271,9 @@ def main():
 # to do add EBL absorption at some stage ...
 #        gta = add_ebl_atten(gta, gta.get_source_name(config['selection']['target']), fit_config['z'])
 
+    # make sure you are fitting data
+    gta.simulate_roi(restore = True)
+
     if compute_sub_gti_lc:
         if args.adaptive:
             # do import only here since root must be compiled
@@ -359,26 +362,8 @@ def main():
             logging.error("Error in optimize: {0}".format(e))
             logging.info("Trying to continue ...")
 
-        # Freeze all parameters
-        gta.free_sources(free = False, pars = fa.allidx + fa.allnorm)
-        # Free parameters of central source
-        gta.free_source(config['selection']['target'], pars = config['lightcurve']['free_params'])
-        # Free Normalization of all Sources within X deg of ROI center
-        gta.free_sources(distance=config['lightcurve']['free_radius'],pars=fa.allnorm)
-        # Fix sources with TS < Y
-        gta.free_sources(minmax_ts=[None,fit_config['ts_fixed']],free=False,
-                pars = fa.allnorm + fa.allidx)
-        # Fix sources Npred < Z
-        gta.free_sources(minmax_npred=[None,fit_config['npred_fixed']],free=False,
-                pars = fa.allnorm + fa.allidx)
+        gta = set_free_pars_lc(gta, config, fit_config)
 
-        # Free all parameters of isotropic and galactic diffuse components
-        if config['lightcurve']['free_background']:
-            gta.free_source('galdiff', pars=fa.allnorm, free = True)
-#        gta.free_source('galdiff', pars=['index'], free = True)
-            gta.free_source('isodiff', pars=fa.allnorm, free = True)
-
-        print_free_sources(gta)
         f = gta.fit()
         gta, f = refit(gta, config['selection']['target'],f, fit_config['ts_fixed'])
         gta.print_roi()
@@ -424,17 +409,7 @@ def main():
 
             # simulate the ROI
             gta.simulate_roi(randomize = bool(args.randomize))
-            # freeze spectral shapes
-            #gta.free_sources(free = False, pars = fa.allidx + fa.allnorm)
-            # Free parameters of central source
-            gta.free_source(config['selection']['target'],
-                pars = config['lightcurve']['free_params'])
-            # Free Normalization of all Sources within X deg of ROI center
-            #gta.free_sources(distance=0.5,pars=fa.allnorm)
-            # Fix spectral shape parameters of central source
-            #gta.free_source(config['selection']['target'],
-            #    pars = fa.allidx,
-            #    free = False)
+            gta = set_free_pars_lc(gta, config, fit_config)
                 
             # fit the simulation
             f = gta.fit()

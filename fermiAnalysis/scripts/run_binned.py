@@ -69,6 +69,10 @@ def main():
     parser.add_argument('--profile2d', default = 0,  
                         help='Compute 2D likelihood surface for PL index and normalization',
                         type=int)
+    parser.add_argument('--srcprob', default = 0,  
+                        help='Calculate the source probability for the photons,' \
+                            ' only works when no sub orbit time scales are used',
+                        type=int)
     args = parser.parse_args()
 
     gta, config, fit_config, job_id  = setup.init_gta(args.conf, i = args.i, logging_level = "INFO")
@@ -330,8 +334,14 @@ def main():
     except:
         logging.error("Residual map computation and plotting failed")
 
+    if args.profile2d:
+        compute_profile2d(gta, config['selection']['target'], prefix = args.state, 
+            sigma = 5., xsteps = 30, ysteps = 31)
 
     if args.createsed:
+        if fit_config['force_free_index']:
+            gta.free_index(config['selection']['target'], free = False)
+            gta.free_index(config['selection']['target'], free = True)
         gta.load_roi(args.state) # reload the average spectral fit
         logging.info('Running sed for {0[target]:s}'.format(config['selection']))
         sed = gta.sed(config['selection']['target'],
@@ -339,18 +349,20 @@ def main():
                         #outfile = 'sed.fits',
                         #free_radius =  #sed_config['free_radius'],
                         #free_background= #sed_config['free_background'],
-                        free_pars = fa.allnorm,
+                        #free_pars = fa.allnorm,
                         #make_plots = sed_config['make_plots'],
                         #cov_scale = sed_config['cov_scale'],
                         #use_local_index = sed_config['use_local_index'],
                         #use_local_index = True, # sed_config['use_local_index'],
                         #bin_index = sed_config['bin_index']
                         )
+        logging.info("SED covariance: {0}".format(sed['param_covariance']))
 
-    if args.profile2d:
-        compute_profile2d(gta, config['selection']['target'], prefix = args.state, 
-            sigma = 5., xsteps = 30, ysteps = 31)
-    return gta
+    if args.srcprob:
+        logging.info("Running srcprob with srcmdl {0:s}".format('avgspec'))
+        gta.compute_srcprob(xmlfile = 'avgspec', overwrite = True)
+
+    return f, gta, fit_config
 
 if __name__ == '__main__':
-    gta = main()
+    res = main()

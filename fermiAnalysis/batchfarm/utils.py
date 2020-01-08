@@ -209,11 +209,14 @@ def missing_files(fname,fn, missing = True, minimum = 0, num = 5,
     
     if folder:
         if split == '':
-            idxs  = array(map( lambda f: int(dirname(f).split('/')[-1][-num:]), files))
+            #idxs  = array(map( lambda f: int(dirname(f).split('/')[-1][-num:]), files))
+            idxs  = array([int(dirname(f).split('/')[-1][-num:]) for f in files])
         else:
-            idxs  = array(map( lambda f: int(dirname(f).split('/')[-1].split(split)[0][-num:]), files))
+            #idxs  = array(map( lambda f: int(dirname(f).split('/')[-1].split(split)[0][-num:]), files))
+            idxs  = array([int(dirname(f).split('/')[-1].split(split)[0][-num:]) for f in files])
     else:
-        idxs  = array(map( lambda f: int(basename(f).split(split)[0][-num:]), files))
+        #idxs  = array(map( lambda f: int(basename(f).split(split)[0][-num:]), files))
+        idxs  = array([int(basename(f).split(split)[0][-num:]) for f in files])
 
     miss = []
     logging.debug('number of files that should be there: {0:n}'.format(fn))
@@ -396,13 +399,13 @@ def copy2scratch(filename,dir,zipping = False, dry = False, stime = 10.):
                 check_call(['rm']+['tmp.tar.gz'])
             else:
                 check_call(['cp'] + filename + [dir])
-            logging.info('copied {0:s} to {1:s}'.format(filename,dir))
+            logging.info('copied {0} to {1:s}'.format(filename,dir))
             sleep(stime)
         return dir
     elif type(filename) == dict:
         if not dry:
             check_call(['cp'] + filename.values() + [dir])
-            logging.info('copied {0:s} to {1:s}'.format(filename,dir))
+            logging.info('copied {0} to {1:s}'.format(filename,dir))
             sleep(stime)
         return dir
     elif type(filename) == str or type(filename) == string_:

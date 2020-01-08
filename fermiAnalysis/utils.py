@@ -145,6 +145,7 @@ def fit_with_retries(gta, fit_config, target,
         o = gta.optimize() # perform an initial fit
         logging.debug(o)
         gta.print_roi()
+        print_free_sources(gta)
     except RuntimeError as e:
         logging.warning("optimize failed with {0}. Trying alternative parameters".format(e))
         if not type(alt_spec_pars) == type(None):
@@ -153,7 +154,12 @@ def fit_with_retries(gta, fit_config, target,
                 spectrum_pars= alt_spec_pars.spectral_pars)
 
     try:
-        f = gta.fit()
+        gta.free_norm(target, free = False)
+        gta.free_norm(target, free = True)
+        gta.free_index(target, free = False)
+        gta.free_index(target, free = True)
+        print_free_sources(gta)
+        f = gta.fit(retries = fit_config['fermipy_retries'])
     except RuntimeError as e:
         logging.warning("fit failed with {0}. Trying to alternative parameters".format(e))
         if not type(alt_spec_pars) == type(None):
@@ -193,15 +199,29 @@ def fit_with_retries(gta, fit_config, target,
         except RuntimeError as e:
             logging.warning("optimize failed with {0}. Trying to continue anyway".format(e))
 
-        f = gta.fit()
+        print_free_sources(gta)
+        f = gta.fit(retries = fit_config['fermipy_retries'])
         retries -= 1
+        
+    logging.info('After fit loop, free source parameters are:')
+    print_free_sources(gta)
+    if f['fit_success'] and fit_config['force_free_index']:
+        logging.info('Fit successfull, re-fitting with norm and index of central source free')
+        gta.free_norm(target, free = False)
+        gta.free_norm(target, free = True)
+        gta.free_index(target, free = False)
+        gta.free_index(target, free = True)
+        f = gta.fit(retries = fit_config['fermipy_retries'])
+        print_free_sources(gta)
+        gta.free_index(target, free = False)
+        gta.free_index(target, free = True)
 
     if not f['fit_success']:
         logging.warning("fit did not suceed, fixing beta and Index2")
         gta.free_source(target, pars = ['beta', 'Index2'], free = False)
         nfree = print_free_sources(gta)
         logging.warning('Now there are {0:n} free parameters'.format(nfree))
-        f = gta.fit()
+        f = gta.fit(retries = fit_config['fermipy_retries'])
 
     return f,gta
 
@@ -217,6 +237,8 @@ def set_free_pars_avg(gta, fit_config, freezesupexp = False):
     except RuntimeError as e:
         logging.warning("optimize failed with {0}. Trying to continue anyway".format(e))
 
+    logging.info("Freeing and Fixing parameters ...")
+    gta.free_sources(free = False, pars = fa.allidx + fa.allnorm)
     # Free all parameters of all Sources within X deg of ROI center
     #gta.free_sources(distance=fit_config['ps_dist_all'])
     # Free Normalization of all Sources within X deg of ROI center
@@ -224,9 +246,9 @@ def set_free_pars_avg(gta, fit_config, freezesupexp = False):
     # Free spectra parameters of all Sources within X deg of ROI center
     gta.free_sources(distance=fit_config['ps_dist_idx'],pars=fa.allidx)
     # Free all parameters of isotropic and galactic diffuse components
-    gta.free_source('galdiff', pars='norm', free = fit_config['gal_norm_free'])
-    gta.free_source('galdiff', pars=['index'], free = fit_config['gal_idx_free'])
-    gta.free_source('isodiff', pars='norm', free = fit_config['iso_norm_free'])
+    gta.free_source('galdiff', pars=['Prefactor'], free = fit_config['gal_norm_free'])
+    gta.free_source('galdiff', pars=['Index'], free = fit_config['gal_idx_free'])
+    gta.free_source('isodiff', pars=['Normalization'], free = fit_config['iso_norm_free'])
     # Free sources with TS > X
     gta.free_sources(minmax_ts=[fit_config['ts_norm'],None], pars =fa.allnorm)
     # Fix sources with TS < Y
@@ -235,6 +257,9 @@ def set_free_pars_avg(gta, fit_config, freezesupexp = False):
     # Fix sources Npred < Z
     gta.free_sources(minmax_npred=[None,fit_config['npred_fixed']],free=False,
             pars = fa.allnorm + fa.allidx)
+    if fit_config['delete_srcs']:
+        gta.delete_sources(minmax_npred = [None,fit_config['npred_fixed']])
+        gta.delete_sources(minmax_ts = [None,fit_config['ts_fixed']])
     if freezesupexp:
         logging.info("Freezing Index2 for all sources")
         gta.free_sources(pars = ['Index2'], free = False)
@@ -303,6 +328,32 @@ def set_lc_bin(tmin, tmax, dt,n, ft1 = 'None'):
         tmax_new = (t['STOP'][min_id:max_id + 1])[n]
         nint = max_id - min_id
     return tmin_new, tmax_new, int(nint)
+
+def set_free_pars_lc(gta, config, fit_config):
+    # Freeze all parameters
+    gta.free_sources(free = False, pars = fa.allidx + fa.allnorm)
+    # Free Normalization of all Sources within X deg of ROI center
+    gta.free_sources(distance=config['lightcurve']['free_radius'],pars=fa.allnorm)
+    # Fix sources with TS < Y
+    gta.free_sources(minmax_ts=[None,fit_config['ts_fixed']],free=False,
+            pars = fa.allnorm + fa.allidx)
+    # Fix sources Npred < Z
+    gta.free_sources(minmax_npred=[None,fit_config['npred_fixed']],free=False,
+            pars = fa.allnorm + fa.allidx)
+
+    # Free all parameters of isotropic and galactic diffuse components
+    if config['lightcurve']['free_background']:
+        gta.free_source('galdiff', pars=['Prefactor'], free = True)
+        gta.free_source('isodiff', pars=['Normalization'], free = True)
+    else:
+        gta.free_source('galdiff', pars=['Prefactor'], free = False)
+        gta.free_source('isodiff', pars=['Normalization'], free = False)
+
+    # Free parameters of central source
+    gta.free_source(config['selection']['target'], pars = config['lightcurve']['free_params'])
+
+    print_free_sources(gta)
+    return gta
 
 def print_free_sources(gta):
     """Print the free source parameters"""
@@ -813,9 +864,12 @@ def compute_profile2d(gta, target, prefix = '', sigma = 5., xsteps = 20, ysteps 
     idx_norm = gta.like.par_index(name, 'Prefactor')
     idx_index = gta.like.par_index(name, 'Index')
 
-    index = np.linspace(s.spectral_pars['Index']['value'] - sigma * s.spectral_pars['Index']['error'],
-                    s.spectral_pars['Index']['value'] + sigma * s.spectral_pars['Index']['error'],
+    dg = s.spectral_pars['Index']['error'] if not s.spectral_pars['Index']['error'] == 0. \
+                else s.spectral_pars['Index']['value'] / 10.
+    index = np.linspace(s.spectral_pars['Index']['value'] - sigma * dg,
+                    s.spectral_pars['Index']['value'] + sigma * dg,
                     xsteps)
+
 
     #norm = np.logspace(np.log10(s.spectral_pars['Prefactor']['error'] * sigma/ \
                             #s.spectral_pars['Prefactor']['value']),
@@ -827,6 +881,11 @@ def compute_profile2d(gta, target, prefix = '', sigma = 5., xsteps = 20, ysteps 
                         np.log10(s.spectral_pars['Prefactor']['value'] * sigma * 2.), \
                         ysteps)
 
+    logging.info("Performing 2D profile")
+    logging.info("index steps: {0}".format(index))
+    logging.info("norm steps: {0}".format(norm))
+    logging.info("Spectral pars: {0}".format(s.spectral_pars))
+    
     # limit range to allowed values by min max
     m = (index >= s.spectral_pars['Index']['min']) & \
         (index <= s.spectral_pars['Index']['max']) 
