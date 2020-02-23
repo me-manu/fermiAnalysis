@@ -73,6 +73,9 @@ def main():
                         help='Calculate the source probability for the photons,' \
                             ' only works when no sub orbit time scales are used',
                         type=int)
+    parser.add_argument('--psf', default = 0,  
+                        help='Calculate the psf',
+                        type=int)
     args = parser.parse_args()
 
     gta, config, fit_config, job_id  = setup.init_gta(args.conf, i = args.i, logging_level = "INFO")
@@ -97,8 +100,18 @@ def main():
     elif args.state == 'setup':
         gta.setup()
 
+        if args.psf:
+            logging.info("Running psf")
+            gta.compute_psf(overwrite = True)
+
+
     elif args.state.find('avgspec') >= 0:
         gta.setup()
+
+        if args.psf:
+            logging.info("Running psf")
+            gta.compute_psf(overwrite = True)
+
         if not type(config['selection']['target']) == str:
             # target name not given
             # take closest source to ROI center if separation 

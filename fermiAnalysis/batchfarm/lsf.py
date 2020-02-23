@@ -228,6 +228,8 @@ def submit_lsf(script,config,option,njobs,**kwargs):
         njobs = kwargs['forceJob']
         nsubmit        = 1
 
+    nsubmit = int(nsubmit)
+
     for i in range(nsubmit):
         if nsubmit == 1:
             if not kwargs['concurrent']:

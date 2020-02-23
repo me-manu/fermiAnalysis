@@ -263,6 +263,10 @@ def set_free_pars_avg(gta, fit_config, freezesupexp = False):
     if freezesupexp:
         logging.info("Freezing Index2 for all sources")
         gta.free_sources(pars = ['Index2'], free = False)
+    # delete specific sources:
+    for src in fit_config.get('delete_source', []):
+        gta.delete_source(src)
+
     gta.print_roi()
     print_free_sources(gta)
     return gta

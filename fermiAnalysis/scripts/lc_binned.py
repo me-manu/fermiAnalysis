@@ -187,56 +187,58 @@ def main():
     files += [config['data']['evfile']]
     utils.copy2scratch(files, gta.workdir)
 
-    # check before the analysis start if there are any events in the master file
-    # in the specified time range
-    logging.info('Checking for events in initial ft1 file')
-    t = Table.read(path.join(gta.workdir,
+    # we're using actual data
+    if args.simulate is None:
+        # check before the analysis start if there are any events in the master file
+        # in the specified time range
+        logging.info('Checking for events in initial ft1 file')
+        t = Table.read(path.join(gta.workdir,
                     path.basename(config['data']['evfile'])),
                     hdu = 'EVENTS')
-    logging.info("times in base ft1: {0} {1} {2}".format(t["TIME"].max(), t["TIME"].min(), t["TIME"].max() - t["TIME"].min()))
-    m = (t["TIME"] >= config['selection']['tmin']) & (t["TIME"] <= config['selection']['tmax'])
-    if np.sum(m) < args.mincounts + 1:
-        logging.error("*** Only {0:n} events between tmin and tmax! Exiting".format(np.sum(m)))
-        assert np.sum(m) > args.mincounts
-    else:
-        logging.info("{0:n} events between tmin and tmax".format(np.sum(m)))
+        logging.info("times in base ft1: {0} {1} {2}".format(t["TIME"].max(), t["TIME"].min(), t["TIME"].max() - t["TIME"].min()))
+        m = (t["TIME"] >= config['selection']['tmin']) & (t["TIME"] <= config['selection']['tmax'])
+        if np.sum(m) < args.mincounts + 1:
+            logging.error("*** Only {0:n} events between tmin and tmax! Exiting".format(np.sum(m)))
+            assert np.sum(m) > args.mincounts
+        else:
+            logging.info("{0:n} events between tmin and tmax".format(np.sum(m)))
 
-    # check how many bins are in each potential light curve bin
-    if compute_sub_gti_lc:
+        # check how many bins are in each potential light curve bin
+        if compute_sub_gti_lc:
 # select time of first and last 
 # photon instead of GTI time
-        m = (t["TIME"] >= config['selection']['tmin']) & \
-             (t["TIME"] <= config['selection']['tmax'])
+            m = (t["TIME"] >= config['selection']['tmin']) & \
+                 (t["TIME"] <= config['selection']['tmax'])
 
-        tmin = t["TIME"][m].min() - 1.
-        tmax = t["TIME"][m].max() + 1.
-        logging.info("There will be up to {0:n} time bins".format(np.ceil(
-            (tmax - tmin) / \
-            config['lightcurve']['binsz'])))
+            tmin = t["TIME"][m].min() - 1.
+            tmax = t["TIME"][m].max() + 1.
+            logging.info("There will be up to {0:n} time bins".format(np.ceil(
+                (tmax - tmin) / \
+                config['lightcurve']['binsz'])))
 
-        bins = np.arange(tmin,tmax,config['lightcurve']['binsz'])
-        bins = np.concatenate([bins, [config['selection']['tmax']]])
-        counts = calc_counts(t,bins)
-        # remove the starting times of the bins with zero counts
-        # and rebin the data
-        logging.info("Counts before rebinning: {0}".format(counts))
-        mincounts = 10.
-        mc = counts < mincounts
-        if np.sum(mc):
-            # remove trailing zeros
-            if np.any(counts == 0.):
-                mcounts_post, mcounts_pre = rm_trailing_zeros(counts)
-                counts = counts[mcounts_post & mcounts_pre]
-                bins = np.concatenate([bins[:-1][mcounts_post & mcounts_pre],
-                    [bins[1:][mcounts_post & mcounts_pre].max()]])
-            bins = rebin(counts, bins)
-            logging.info("Bin lengths after rebinning: {0}".format(np.diff(bins)))
-            logging.info("Bin times after rebinning: {0}".format(bins))
-            counts = calc_counts(t, bins)
-            logging.info("Counts after rebinning: {0}".format(counts))
-        else:
-            logging.info("Regular time binning will be used")
-        bins = list(bins)
+            bins = np.arange(tmin,tmax,config['lightcurve']['binsz'])
+            bins = np.concatenate([bins, [config['selection']['tmax']]])
+            counts = calc_counts(t,bins)
+            # remove the starting times of the bins with zero counts
+            # and rebin the data
+            logging.info("Counts before rebinning: {0}".format(counts))
+            mincounts = 10.
+            mc = counts < mincounts
+            if np.sum(mc):
+                # remove trailing zeros
+                if np.any(counts == 0.):
+                    mcounts_post, mcounts_pre = rm_trailing_zeros(counts)
+                    counts = counts[mcounts_post & mcounts_pre]
+                    bins = np.concatenate([bins[:-1][mcounts_post & mcounts_pre],
+                        [bins[1:][mcounts_post & mcounts_pre].max()]])
+                bins = rebin(counts, bins)
+                logging.info("Bin lengths after rebinning: {0}".format(np.diff(bins)))
+                logging.info("Bin times after rebinning: {0}".format(bins))
+                counts = calc_counts(t, bins)
+                logging.info("Counts after rebinning: {0}".format(counts))
+            else:
+                logging.info("Regular time binning will be used")
+            bins = list(bins)
 
     logging.info('Running fermipy setup')
     try:
@@ -247,6 +249,8 @@ def main():
         logging.error(e)
         if e.message.find("File not found") >= 0 and e.message.find('srcmap') >= 0:
             logging.error("*** Srcmap calculation failed ***")
+        if e.message.find("NDSKEYS") >= 0 and e.message.find('srcmap') >= 0:
+            logging.error("*** Srcmap calculation failed with NDSKEYS keyword not found in header ***")
 
         logging.info("Checking if there are events in ft1 file")
         ft1 = path.join(gta.workdir,'ft1_00.fits')
@@ -266,156 +270,160 @@ def main():
     gta.load_roi('avgspec') # reload the average spectral fit
     logging.info('Running fermipy optimize and fit')
 
-    if args.forcepl:
-        gta = set_src_spec_pl(gta, gta.get_source_name(config['selection']['target']))
+    # we're using actual data
+    if args.simulate is None:
+        if args.forcepl:
+            gta = set_src_spec_pl(gta, gta.get_source_name(config['selection']['target']))
 # to do add EBL absorption at some stage ...
 #        gta = add_ebl_atten(gta, gta.get_source_name(config['selection']['target']), fit_config['z'])
 
-    # make sure you are fitting data
-    gta.simulate_roi(restore = True)
+        # make sure you are fitting data
+        gta.simulate_roi(restore = True)
 
-    if compute_sub_gti_lc:
-        if args.adaptive:
-            # do import only here since root must be compiled
-            from fermiAnalysis import adaptivebinning as ab
-             # compute the exposure
-            energy = 1000.
-            texp, front, back = ab.comp_exposure_phi(gta, energy = 1000.)
-            # compute the bins
-            result = ab.time_bins(gta, texp,
-                                    0.5 * (front + back), 
-                                    #critval = 20., # bins with ~20% unc
-                                    critval = lc_config['adaptive'],
-                                    Epivot = None, # compute on the fly
-            #                        tstart = config['selection']['tmin'],
-            #                        tstop = config['selection']['tmax']
-                                    )
-
-            # cut the bins to this GTI
-            mask = result['tstop'] > config['selection']['tmin']
-            mask = mask & (result['tstart'] < config['selection']['tmax'])
-
-            # try again with catalog values
-            if not np.sum(mask):
-                logging.error("Adaptive bins outside time window, trying catalog values for flux")
+        if compute_sub_gti_lc:
+            if args.adaptive:
+                # do import only here since root must be compiled
+                from fermiAnalysis import adaptivebinning as ab
+                 # compute the exposure
+                energy = 1000.
+                texp, front, back = ab.comp_exposure_phi(gta, energy = 1000.)
+                # compute the bins
                 result = ab.time_bins(gta, texp,
-                                    0.5 * (front + back), 
-                                    critval = lc_config['adaptive'], # bins with ~20% unc
-                                    Epivot = None, # compute on the fly
-                                    forcecatalog = True,
-            #                        tstart = config['selection']['tmin'],
-            #                        tstop = config['selection']['tmax']
-                                    )
+                                        0.5 * (front + back), 
+                                        #critval = 20., # bins with ~20% unc
+                                        critval = lc_config['adaptive'],
+                                        Epivot = None, # compute on the fly
+                #                        tstart = config['selection']['tmin'],
+                #                        tstop = config['selection']['tmax']
+                                        )
 
                 # cut the bins to this GTI
                 mask = result['tstop'] > config['selection']['tmin']
                 mask = mask & (result['tstart'] < config['selection']['tmax'])
+
+                # try again with catalog values
                 if not np.sum(mask):
-                    logging.error("Adaptive bins do not cover selected time interval!")
-                    logging.error("Using original bins")
+                    logging.error("Adaptive bins outside time window, trying catalog values for flux")
+                    result = ab.time_bins(gta, texp,
+                                        0.5 * (front + back), 
+                                        critval = lc_config['adaptive'], # bins with ~20% unc
+                                        Epivot = None, # compute on the fly
+                                        forcecatalog = True,
+                #                        tstart = config['selection']['tmin'],
+                #                        tstop = config['selection']['tmax']
+                                        )
 
-                else:
-                    bins = np.concatenate((result['tstart'][mask], [result['tstop'][mask][-1]]))
-                    bins[0] = np.max([config['selection']['tmin'], bins[0]])
-                    bins[-1] = np.min([config['selection']['tmax'], bins[-1]])
-                    bins = list(bins)
+                    # cut the bins to this GTI
+                    mask = result['tstop'] > config['selection']['tmin']
+                    mask = mask & (result['tstart'] < config['selection']['tmax'])
+                    if not np.sum(mask):
+                        logging.error("Adaptive bins do not cover selected time interval!")
+                        logging.error("Using original bins")
 
-                    # removing trailing zeros
-                    counts = calc_counts(t,bins)
-                    mcounts_post, mcounts_pre = rm_trailing_zeros(counts)
-                    logging.info("count masks: {0} {1}, bins: {2}, counts: {3}".format(mcounts_post, mcounts_pre, bins, counts))
-                    counts = counts[mcounts_post & mcounts_pre]
-                    bins = np.concatenate([np.array(bins)[:-1][mcounts_post & mcounts_pre],
-                        [np.array(bins)[1:][mcounts_post & mcounts_pre].max()]])
-                    logging.info("Using bins {0}, total n={1:n} bins".format(bins, len(bins)-1))
-                    logging.info("bins widths : {0}".format(np.diff(bins)))
-                    logging.info("counts per bin: {0} ".format(calc_counts(t,bins)))
-                    bins = list(bins)
+                    else:
+                        bins = np.concatenate((result['tstart'][mask], [result['tstop'][mask][-1]]))
+                        bins[0] = np.max([config['selection']['tmin'], bins[0]])
+                        bins[-1] = np.min([config['selection']['tmax'], bins[-1]])
+                        bins = list(bins)
+
+                        # removing trailing zeros
+                        counts = calc_counts(t,bins)
+                        mcounts_post, mcounts_pre = rm_trailing_zeros(counts)
+                        logging.info("count masks: {0} {1}, bins: {2}, counts: {3}".format(mcounts_post, mcounts_pre, bins, counts))
+                        counts = counts[mcounts_post & mcounts_pre]
+                        bins = np.concatenate([np.array(bins)[:-1][mcounts_post & mcounts_pre],
+                            [np.array(bins)[1:][mcounts_post & mcounts_pre].max()]])
+                        logging.info("Using bins {0}, total n={1:n} bins".format(bins, len(bins)-1))
+                        logging.info("bins widths : {0}".format(np.diff(bins)))
+                        logging.info("counts per bin: {0} ".format(calc_counts(t,bins)))
+                        bins = list(bins)
 
 # TODO: test that this is working also with GTIs that have little or no counts
 
-        lc = gta.lightcurve(config['selection']['target'],
-                                binsz = config['lightcurve']['binsz'],
-                                free_background = config['lightcurve']['free_background'],
-                                free_params = config['lightcurve']['free_params'],
-                                free_radius = config['lightcurve']['free_radius'],
-                                make_plots = True,
-                                multithread = True,
-                                nthread = 4,
-                                #multithread = False,
-                                #nthread = 1,
-                                save_bin_data = True,
-                                shape_ts_threshold = 16.,
-                                use_scaled_srcmap = True,
-                                use_local_ltcube = True,
-                                write_fits = True, 
-                                write_npy = True,
-                                time_bins = bins, 
-                                outdir = '{0:.0f}s'.format(config['lightcurve']['binsz'])
-                                )
-    else:
-    # run the fitting of the entire time and energy range
-        try:
-            o = gta.optimize() # perform an initial fit
-            logging.debug(o)
-        except RuntimeError as e:
-            logging.error("Error in optimize: {0}".format(e))
-            logging.info("Trying to continue ...")
+            lc = gta.lightcurve(config['selection']['target'],
+                                    binsz = config['lightcurve']['binsz'],
+                                    free_background = config['lightcurve']['free_background'],
+                                    free_params = config['lightcurve']['free_params'],
+                                    free_radius = config['lightcurve']['free_radius'],
+                                    make_plots = True,
+                                    multithread = True,
+                                    nthread = 4,
+                                    #multithread = False,
+                                    #nthread = 1,
+                                    save_bin_data = True,
+                                    shape_ts_threshold = 16.,
+                                    use_scaled_srcmap = True,
+                                    use_local_ltcube = True,
+                                    write_fits = True, 
+                                    write_npy = True,
+                                    time_bins = bins, 
+                                    outdir = '{0:.0f}s'.format(config['lightcurve']['binsz'])
+                                    )
+        else:
+        # run the fitting of the entire time and energy range
+            try:
+                o = gta.optimize() # perform an initial fit
+                logging.debug(o)
+            except RuntimeError as e:
+                logging.error("Error in optimize: {0}".format(e))
+                logging.info("Trying to continue ...")
 
-        gta = set_free_pars_lc(gta, config, fit_config)
-
-        f = gta.fit()
-        gta, f = refit(gta, config['selection']['target'],f, fit_config['ts_fixed'])
-        gta.print_roi()
-        gta.write_roi('lc')
-
-        if args.createsed:
-            gta.load_roi('lc') # reload the average spectral fit
-            logging.info('Running sed for {0[target]:s}'.format(config['selection']))
-            sed = gta.sed(config['selection']['target'],
-                        prefix = 'lc_sed',
-                        free_radius = None if config['sed']['free_radius'] == 0. \
-                            else config['sed']['free_radius'],
-                        free_background= config['sed']['free_background'],
-                        free_pars = fa.allnorm,
-                        make_plots = config['sed']['make_plots'],
-                        cov_scale = config['sed']['cov_scale'],
-                        use_local_index = config['sed']['use_local_index'],
-                        bin_index = config['sed']['bin_index']
-                        )
-
-    # debugging: calculate sed and resid maps for each light curve bin
-    #logging.info('Running sed for {0[target]:s}'.format(config['selection']))
-    #sed = gta.sed(config['selection']['target'], prefix = 'lc')
-    #model = {'Scale': 1000., 'Index' : fit_config['new_src_pl_index'], 'SpatialModel' : 'PointSource'}
-    #resid_maps = gta.residmap('lc',model=model, make_plots=True, write_fits = True, write_npy = True)
-
-        if args.srcprob:
-            logging.info("Running srcprob with srcmdl {0:s}".format('lc'))
-            gta.compute_srcprob(xmlfile = 'lc', overwrite = True)
-
-        # simulate a source 
-        if args.simulate is not None:
-            with open(args.simulate) as f:
-                simsource = np.load(f, allow_pickle = True).flat[0]
-
-            # set the source to the simulation value
-            gta.set_source_spectrum(simsource['target'],
-                spectrum_type = simsource['spectrum_type'],
-                spectrum_pars = simsource['spectrum_pars'][job_id - 1])
-
-            logging.info("changed spectral parameters to {0}".format(
-                gta.roi.get_source_by_name(simsource['target']).spectral_pars))
-
-            # simulate the ROI
-            gta.simulate_roi(randomize = bool(args.randomize))
             gta = set_free_pars_lc(gta, config, fit_config)
-                
-            # fit the simulation
+
             f = gta.fit()
             gta, f = refit(gta, config['selection']['target'],f, fit_config['ts_fixed'])
             gta.print_roi()
-            gta.write_roi('lc_simulate_{0:s}'.format(simsource['suffix']))
+            gta.write_roi('lc')
+
+            if args.createsed:
+                gta.load_roi('lc') # reload the average spectral fit
+                logging.info('Running sed for {0[target]:s}'.format(config['selection']))
+                sed = gta.sed(config['selection']['target'],
+                            prefix = 'lc_sed',
+                            free_radius = None if config['sed']['free_radius'] == 0. \
+                                else config['sed']['free_radius'],
+                            free_background= config['sed']['free_background'],
+                            free_pars = fa.allnorm,
+                            make_plots = config['sed']['make_plots'],
+                            cov_scale = config['sed']['cov_scale'],
+                            use_local_index = config['sed']['use_local_index'],
+                            bin_index = config['sed']['bin_index']
+                            )
+
+        # debugging: calculate sed and resid maps for each light curve bin
+        #logging.info('Running sed for {0[target]:s}'.format(config['selection']))
+        #sed = gta.sed(config['selection']['target'], prefix = 'lc')
+        #model = {'Scale': 1000., 'Index' : fit_config['new_src_pl_index'], 'SpatialModel' : 'PointSource'}
+        #resid_maps = gta.residmap('lc',model=model, make_plots=True, write_fits = True, write_npy = True)
+
+            if args.srcprob:
+                logging.info("Running srcprob with srcmdl {0:s}".format('lc'))
+                gta.compute_srcprob(xmlfile = 'lc', overwrite = True)
+
+    # we are simulating a source
+    else:
+# TODO: I probably have to run the setup here. Do on weekly files, i.e., no time cut? Only do that later?
+
+        with open(args.simulate) as f:
+            simsource = np.load(f, allow_pickle = True).flat[0]
+
+        # set the source to the simulation value
+        gta.set_source_spectrum(simsource['target'],
+            spectrum_type = simsource['spectrum_type'],
+            spectrum_pars = simsource['spectrum_pars'][job_id - 1])
+
+        logging.info("changed spectral parameters to {0}".format(
+            gta.roi.get_source_by_name(simsource['target']).spectral_pars))
+
+        # simulate the ROI
+        gta.simulate_roi(randomize = bool(args.randomize))
+        gta = set_free_pars_lc(gta, config, fit_config)
+            
+        # fit the simulation
+        f = gta.fit()
+        gta, f = refit(gta, config['selection']['target'],f, fit_config['ts_fixed'])
+        gta.print_roi()
+        gta.write_roi('lc_simulate_{0:s}'.format(simsource['suffix']))
     return gta 
 
 if __name__ == '__main__':
