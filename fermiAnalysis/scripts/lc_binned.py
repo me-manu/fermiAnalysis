@@ -1,12 +1,10 @@
-import matplotlib
-matplotlib.use('Agg')
 import fermipy
 from fermipy.gtanalysis import GTAnalysis
 from fermipy.skymap import Map
 from astropy.table import Table
 from os import path, environ
 import logging
-from haloanalysis.batchfarm import utils,lsf
+from fermiAnalysis.batchfarm import utils,lsf
 import fermiAnalysis as fa
 from fermiAnalysis.utils import * 
 import argparse
@@ -16,6 +14,7 @@ import copy
 import numpy as np
 from glob import glob
 from fermiAnalysis.prepare import PreparePointSource 
+from fermipy.utils import init_matplotlib_backend
 
 def rebin(c,b,minc = 10):
     """
@@ -71,6 +70,8 @@ def main():
     parser.add_argument('-c', '--conf', required = True)
     parser.add_argument('-i', required=False, default = 0, 
                         help='Set local or scratch calculation', type=int)
+    parser.add_argument('--state', help='analysis state', choices=['avgspec', 'setup'],
+                        default='avgspec')
     parser.add_argument('--forcepl', default = 0,  
                         help='Force the target source to have power-law shape',
                         type=int)
@@ -90,6 +91,9 @@ def main():
     parser.add_argument('--simulate', default = None,  
                         help='None or full path to yaml file which contains src name' \
                         'and spec to be simulated',
+                        )
+    parser.add_argument('--make_plots', default = 0, type=int,   
+                        help='Create sed plot',
                         )
     parser.add_argument('--randomize', default = 1,  
                         help='If you simulate, use Poisson realization. If false, use Asimov data set',
@@ -147,8 +151,13 @@ def main():
     if args.adaptive:
         config['fileio']['outdir'] = utils.mkdir(path.join(config['fileio']['outdir'],'adaptive{0:.0f}/'.format(
                                                     lc_config['adaptive'])))
-    config['fileio']['outdir'] = utils.mkdir(path.join(config['fileio']['outdir'],
-                        '{0:05n}/'.format(job_id if job_id > 0 else 1)))
+
+    if args.state == 'setup':
+        config['fileio']['outdir'] = utils.mkdir(path.join(config['fileio']['outdir'],
+                                                 'setup{0:05n}/'.format(job_id if job_id > 0 else 1)))
+    else:
+        config['fileio']['outdir'] = utils.mkdir(path.join(config['fileio']['outdir'],
+                                                 '{0:05n}/'.format(job_id if job_id > 0 else 1)))
 
     logging.info('Starting with fermipy analysis')
     logging.info('using fermipy version {0:s}'.format(fermipy.__version__))
@@ -263,7 +272,12 @@ def main():
             logging.error("*** The ft1 file contains no events!! ***".format(len(t)))
         else:
             logging.info("The ft1 file contains {0:n} event(s)".format(len(t)))
-        raise
+        return
+
+    # end here if you only want to calulate 
+    # intermediate fits files
+    if args.state == 'setup':
+        return gta
 
 
     logging.info('Loading the fit for the average spectrum')
@@ -345,7 +359,7 @@ def main():
                                     free_background = config['lightcurve']['free_background'],
                                     free_params = config['lightcurve']['free_params'],
                                     free_radius = config['lightcurve']['free_radius'],
-                                    make_plots = True,
+                                    make_plots = False,
                                     multithread = True,
                                     nthread = 4,
                                     #multithread = False,
@@ -371,11 +385,19 @@ def main():
             gta = set_free_pars_lc(gta, config, fit_config)
 
             f = gta.fit()
-            gta, f = refit(gta, config['selection']['target'],f, fit_config['ts_fixed'])
+
+            if 'fix_sources' in fit_config.keys():
+                skip = fit_config['fix_sources'].keys()
+            else:
+                skip = []
+
+            gta, f = refit(gta, config['selection']['target'],f, fit_config['ts_fixed'], skip=skip)
             gta.print_roi()
             gta.write_roi('lc')
 
             if args.createsed:
+                if args.make_plots:
+                    init_matplotlib_backend()
                 gta.load_roi('lc') # reload the average spectral fit
                 logging.info('Running sed for {0[target]:s}'.format(config['selection']))
                 sed = gta.sed(config['selection']['target'],
@@ -384,7 +406,7 @@ def main():
                                 else config['sed']['free_radius'],
                             free_background= config['sed']['free_background'],
                             free_pars = fa.allnorm,
-                            make_plots = config['sed']['make_plots'],
+                            make_plots = args.make_plots,
                             cov_scale = config['sed']['cov_scale'],
                             use_local_index = config['sed']['use_local_index'],
                             bin_index = config['sed']['bin_index']

@@ -182,7 +182,7 @@ def update_diff(dict1,dict2):
 
 
 def missing_files(fname,fn, missing = True, minimum = 0, num = 5,
-                    startnum = 1, split = '.dat.gz', folder = False):
+                    startnum = 1, split = '.dat.gz', strip=None, folder = False):
     """
     Check for missing files.
 
@@ -197,6 +197,7 @@ def missing_files(fname,fn, missing = True, minimum = 0, num = 5,
     missing:        bool, if True, look for missing files, if false, look for present files.
     num:        int, number of digits of file identifier (default: 5)
     split:        str, str used to split file names, default: '.dat.gz'
+    strip:        str, str stripped from file/folder names, default: None
     folder:         bool, if true, numerals with job numbers are given in directory as /some/path/00001/output.file
     startnum:   int, starting number for file ids (default: 1)
 
@@ -210,13 +211,13 @@ def missing_files(fname,fn, missing = True, minimum = 0, num = 5,
     if folder:
         if split == '':
             #idxs  = array(map( lambda f: int(dirname(f).split('/')[-1][-num:]), files))
-            idxs  = array([int(dirname(f).split('/')[-1][-num:]) for f in files])
+            idxs  = array([int(dirname(f).strip(strip).split('/')[-1][-num:]) for f in files])
         else:
             #idxs  = array(map( lambda f: int(dirname(f).split('/')[-1].split(split)[0][-num:]), files))
-            idxs  = array([int(dirname(f).split('/')[-1].split(split)[0][-num:]) for f in files])
+            idxs  = array([int(dirname(f).split('/')[-1].strip(strip).split(split)[0][-num:]) for f in files])
     else:
         #idxs  = array(map( lambda f: int(basename(f).split(split)[0][-num:]), files))
-        idxs  = array([int(basename(f).split(split)[0][-num:]) for f in files])
+        idxs  = array([int(basename(f).strip(strip).split(split)[0][-num:]) for f in files])
 
     miss = []
     logging.debug('number of files that should be there: {0:n}'.format(fn))

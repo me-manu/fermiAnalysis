@@ -140,10 +140,15 @@ def fit_with_retries(gta, fit_config, target,
                         alt_spec_pars = None,
                         tsmax = 1e3):
     """Fit the model and retry if not converged"""
+    if 'fix_sources' in fit_config.keys():
+        fix_sources = copy.deepcopy(fit_config['fix_sources'])
+    else:
+        fix_sources = {}
 
     try:
-        o = gta.optimize() # perform an initial fit
+        o = gta.optimize(skip=fix_sources.keys()) # perform an initial fit
         logging.debug(o)
+        logging.info("Done with gta.optimize")
         gta.print_roi()
         print_free_sources(gta)
     except RuntimeError as e:
@@ -158,8 +163,9 @@ def fit_with_retries(gta, fit_config, target,
         gta.free_norm(target, free = True)
         gta.free_index(target, free = False)
         gta.free_index(target, free = True)
+        logging.info("starting gta.fit")
         print_free_sources(gta)
-        f = gta.fit(retries = fit_config['fermipy_retries'])
+        f = gta.fit(retries=fit_config.get('fermipy_retries', 3))
     except RuntimeError as e:
         logging.warning("fit failed with {0}. Trying to alternative parameters".format(e))
         if not type(alt_spec_pars) == type(None):
@@ -193,25 +199,25 @@ def fit_with_retries(gta, fit_config, target,
             nfree0 = nfree
             logging.info("Retrying fit with {0:n} free parameters".format(nfree))
         try:
-            o = gta.optimize() # perform an initial fit
+            o = gta.optimize(skip=fix_sources.keys()) # perform an initial fit
             logging.debug(o)
             gta.print_roi()
         except RuntimeError as e:
             logging.warning("optimize failed with {0}. Trying to continue anyway".format(e))
 
         print_free_sources(gta)
-        f = gta.fit(retries = fit_config['fermipy_retries'])
+        f = gta.fit(retries=fit_config.get('fermipy_retries', 3))
         retries -= 1
         
     logging.info('After fit loop, free source parameters are:')
     print_free_sources(gta)
-    if f['fit_success'] and fit_config['force_free_index']:
+    if f['fit_success'] and fit_config.get('force_free_index', False):
         logging.info('Fit successfull, re-fitting with norm and index of central source free')
         gta.free_norm(target, free = False)
         gta.free_norm(target, free = True)
         gta.free_index(target, free = False)
         gta.free_index(target, free = True)
-        f = gta.fit(retries = fit_config['fermipy_retries'])
+        f = gta.fit(retries = fit_config.get('fermipy_retries', 3))
         print_free_sources(gta)
         gta.free_index(target, free = False)
         gta.free_index(target, free = True)
@@ -221,7 +227,7 @@ def fit_with_retries(gta, fit_config, target,
         gta.free_source(target, pars = ['beta', 'Index2'], free = False)
         nfree = print_free_sources(gta)
         logging.warning('Now there are {0:n} free parameters'.format(nfree))
-        f = gta.fit(retries = fit_config['fermipy_retries'])
+        f = gta.fit(retries = fit_config.get('fermipy_retries', 3))
 
     return f,gta
 
@@ -229,9 +235,14 @@ def set_free_pars_avg(gta, fit_config, freezesupexp = False):
     """
     Freeze are thaw fit parameters for average fit
     """
+    if 'fix_sources' in fit_config.keys():
+        fix_sources = copy.deepcopy(fit_config['fix_sources'])
+    else:
+        fix_sources = {}
+
     # run the fitting of the entire time and energy range
     try:
-        o = gta.optimize() # perform an initial fit
+        o = gta.optimize(skip=fix_sources.keys()) # perform an initial fit
         logging.debug(o)
         gta.print_roi()
     except RuntimeError as e:
@@ -257,18 +268,30 @@ def set_free_pars_avg(gta, fit_config, freezesupexp = False):
     # Fix sources Npred < Z
     gta.free_sources(minmax_npred=[None,fit_config['npred_fixed']],free=False,
             pars = fa.allnorm + fa.allidx)
-    if fit_config['delete_srcs']:
+
+    if fit_config.get('delete_srcs', False):
         gta.delete_sources(minmax_npred = [None,fit_config['npred_fixed']])
         gta.delete_sources(minmax_ts = [None,fit_config['ts_fixed']])
+
     if freezesupexp:
         logging.info("Freezing Index2 for all sources")
-        gta.free_sources(pars = ['Index2'], free = False)
+        gta.free_sources(pars = ['Index2'], free=False)
+
     # delete specific sources:
     for src in fit_config.get('delete_source', []):
         gta.delete_source(src)
 
+    if 'free_sources' in fit_config.keys():
+        for src, pars in fit_config['free_sources'].items():
+            gta.free_source(src, pars=pars, free=True)
+
+    if 'fix_sources' in fit_config.keys():
+        for src, pars in fit_config['fix_sources'].items():
+            gta.free_source(src, pars=pars, free=False)
+
     gta.print_roi()
     print_free_sources(gta)
+    logging.info("done with set_free_pars_avg function")
     return gta
 
 def set_lc_bin(tmin, tmax, dt,n, ft1 = 'None'):
@@ -353,10 +376,30 @@ def set_free_pars_lc(gta, config, fit_config):
         gta.free_source('galdiff', pars=['Prefactor'], free = False)
         gta.free_source('isodiff', pars=['Normalization'], free = False)
 
+    # delete srcs with low npred or ts
+    # we actually don't want to do that here because
+    # week target sources might be deleted here as well
+    #if fit_config.get('delete_srcs', False):
+    #    gta.delete_sources(minmax_npred = [None,fit_config['npred_fixed']])
+    #    gta.delete_sources(minmax_ts = [None,fit_config['ts_fixed']])
+    # delete specific sources:
+    for src in fit_config.get('delete_source', []):
+        gta.delete_source(src)
+    # force to fix sources
+    if 'fix_sources' in fit_config.keys():
+        for src, pars in fit_config['fix_sources'].items():
+            gta.free_source(src, pars=pars, free=False)
+    # force to free sources -- rather not in LC fitting
+    #if 'free_sources' in fit_config.keys():
+    #    for src, pars in fit_config['free_sources'].items():
+    #        gta.free_source(src, pars=pars, free=True)
+
     # Free parameters of central source
     gta.free_source(config['selection']['target'], pars = config['lightcurve']['free_params'])
 
     print_free_sources(gta)
+
+    logging.info("done with set_free_pars_lc function")
     return gta
 
 def print_free_sources(gta):
@@ -370,7 +413,7 @@ def print_free_sources(gta):
                 nfree += 1
     return nfree
 
-def refit(gta, src, f, tsfix):
+def refit(gta, src, f, tsfix, skip=[]):
     """
     If fit was not successful, refit while freezing more sources
 
@@ -383,6 +426,8 @@ def refit(gta, src, f, tsfix):
         output of first gta.fit
     ts_fixed: float
        initial ts below which sources are frozen 
+    skip: list
+        list of source names that will be skipped by gta.optimize
 
     Returns
     -------
@@ -400,7 +445,7 @@ def refit(gta, src, f, tsfix):
             for k in s.spectral_pars.keys():
                 if s.spectral_pars[k]['free']:   
                     logging.info('{0:s}: {1:s}'.format(s.name, k))
-        o = gta.optimize()
+        o = gta.optimize(skip=skip)
         gta.print_roi()
         f = gta.fit()
         retries -= 1
@@ -710,6 +755,7 @@ def add_columns(columns, fitsfile, hdu, createsedlc = False, sedname = 'lc_sed*.
             columns['eflux'].append(np.squeeze(f[hdu].data['eflux'][s]))
             columns['flux_err'].append(np.squeeze(f[hdu].data['flux_err'][s]))
             columns['flux'].append(np.squeeze(f[hdu].data['flux'][s]))
+            columns['flux_ul95'].append(np.squeeze(f[hdu].data['flux_ul95'][s]))
 
         elif hdu == 'LIGHTCURVE':
             s = slice(f[hdu].data.size)
@@ -723,6 +769,7 @@ def add_columns(columns, fitsfile, hdu, createsedlc = False, sedname = 'lc_sed*.
             columns['eflux'] = np.concatenate([columns['eflux'], f[hdu].data['eflux'][s]])
             columns['flux_err'] = np.concatenate([columns['flux_err'], f[hdu].data['flux_err'][s]])
             columns['flux'] = np.concatenate([columns['flux'], f[hdu].data['flux'][s]])
+            columns['flux_ul95'] = np.concatenate([columns['flux_ul95'], f[hdu].data['flux_ul95'][s]])
             columns['param_names'] = np.vstack([columns['param_names'],f[hdu].data['param_names'][s]])
             columns['param_values'] = np.vstack([columns['param_values'],f[hdu].data['param_values'][s]])
             columns['param_errors'] = np.vstack([columns['param_errors'],f[hdu].data['param_errors'][s]])
@@ -731,6 +778,7 @@ def add_columns(columns, fitsfile, hdu, createsedlc = False, sedname = 'lc_sed*.
                 columns['eflux_fixed'] = np.concatenate([columns['eflux_fixed'], f[hdu].data['eflux_fixed'][s]])
                 columns['flux_err_fixed'] = np.concatenate([columns['flux_err_fixed'], f[hdu].data['flux_err_fixed'][s]])
                 columns['flux_fixed'] = np.concatenate([columns['flux_fixed'], f[hdu].data['flux_fixed'][s]])
+                columns['flux_ul95_fixed'] = np.concatenate([columns['flux_ul95_fixed'], f[hdu].data['flux_ul95_fixed'][s]])
                 columns['ts_fixed'] = np.concatenate([columns['ts_fixed'], f[hdu].data['ts_fixed'][s]])
 
         for h in f:
@@ -757,7 +805,7 @@ def collect_lc_results(outfiles, hdu = "CATALOG", stripstring = '', sedname = 'l
     columns = dict(tmin = [], tmax = [],
                     emin = [], emax = [],
                     npred = [], ts = [], eflux = [],
-                    eflux_err = [],flux = [],flux_err = [],
+                    eflux_err = [],flux = [],flux_err = [], flux_ul95 = [],
                     param_names = [], param_values = [], param_errors = [])
     if createsedlc:
         columns.update(dict(
@@ -784,6 +832,7 @@ def collect_lc_results(outfiles, hdu = "CATALOG", stripstring = '', sedname = 'l
             columns.update(dict(ts_fixed = [],
             flux_fixed = [],
             flux_err_fixed  = [],
+            flux_ul95_fixed  = [],
             eflux_err_fixed  = [],
             eflux_fixed = []
             ))
@@ -805,6 +854,7 @@ def collect_lc_results(outfiles, hdu = "CATALOG", stripstring = '', sedname = 'l
     t['emax'].unit = 'MeV'
     t['eflux_err'].unit = 'MeV'
     t['flux'].unit = 'cm-2 s-1'
+    t['flux_ul95'].unit = 'cm-2 s-1'
     t['flux_err'].unit = 'cm-2 s-1'
     t['eflux'].unit = 'MeV cm-2 s-1' 
     t['eflux_err'].unit = 'MeV cm-2 s-1' 
@@ -850,7 +900,7 @@ def read_srcprob(ft1srcprob, srcname):
             prob = np.concatenate([prob,t[srcname].data])
     return energies, times, conv, prob
 
-def compute_profile2d(gta, target, prefix = '', sigma = 5., xsteps = 20, ysteps = 21):
+def compute_profile2d(gta, target, prefix = '', sigma = 5., xsteps = 20, ysteps = 21, skip=[]):
     # save state
     saved_state = LikelihoodState(gta.like)
 
@@ -858,7 +908,7 @@ def compute_profile2d(gta, target, prefix = '', sigma = 5., xsteps = 20, ysteps 
     if not s['SpectrumType']  == 'PowerLaw':
         logging.info("Changing spec to PL and re-fitting")
         gta = set_src_spec_pl(gta, gta.get_source_name(target))
-        gta.optimize()
+        gta.optimize(skip=skip)
         gta.fit()
 
     loglike = -gta.like()

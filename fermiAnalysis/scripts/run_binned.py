@@ -1,11 +1,12 @@
-import matplotlib
-matplotlib.use('Agg')
-from fermipy.gtanalysis import GTAnalysis
 #from fermipy.skymap import Map
+try:
+    from fermipy.utils import init_matplotlib_backend
+    init_matplotlib_backend()
+except:
+    pass
 from gammapy.maps import WcsNDMap
 from os import path
 import logging
-from fermiAnalysis.batchfarm import utils,lsf
 import fermiAnalysis as fa
 import argparse
 import yaml
@@ -16,6 +17,8 @@ from glob import glob
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 from fermiAnalysis import setup
+from fermipy.gtanalysis import GTAnalysis
+from fermiAnalysis.batchfarm import utils,lsf
 from fermiAnalysis.utils import set_free_pars_avg,fit_with_retries
 from fermiAnalysis.utils import set_src_spec_pl, set_src_spec_plexpcut
 from fermiAnalysis.utils import compute_profile2d, get_best_fit_covar
@@ -76,10 +79,19 @@ def main():
     parser.add_argument('--psf', default = 0,  
                         help='Calculate the psf',
                         type=int)
+    parser.add_argument('--make_plots', default = 0, type=int,   
+                        help='Create plots',
+                        )
+    parser.add_argument('--drm', default = 0,  
+                        help='Calculate the detector response matrix',
+                        type=int)
     args = parser.parse_args()
 
     gta, config, fit_config, job_id  = setup.init_gta(args.conf, i = args.i, logging_level = "INFO")
     logging.info('Running fermipy setup')
+
+    if args.make_plots:
+        init_matplotlib_backend()
 
     if args.reloadfit:
         files = [fn for fn in glob(fit_config['avgspec']) if fn.find('.xml') > 0 or fn.find('.npy') > 0]
@@ -104,6 +116,10 @@ def main():
             logging.info("Running psf")
             gta.compute_psf(overwrite = True)
 
+        if args.drm:
+            logging.info("Running drm")
+            gta.compute_drm(overwrite = True)
+
 
     elif args.state.find('avgspec') >= 0:
         gta.setup()
@@ -111,6 +127,10 @@ def main():
         if args.psf:
             logging.info("Running psf")
             gta.compute_psf(overwrite = True)
+
+        if args.drm:
+            logging.info("Running drm")
+            gta.compute_drm(overwrite = True)
 
         if not type(config['selection']['target']) == str:
             # target name not given
@@ -225,11 +245,14 @@ def main():
                                     alt_spec_pars = old_spec_pars)
 
         logging.debug(f)
-        get_best_fit_covar(gta, config['selection']['target'], prefix = args.state)
+        try:
+            get_best_fit_covar(gta, config['selection']['target'], prefix = args.state)
+        except IndexError:
+            logging.error("Covariance matrix calculation failed")
 
         #relocalize central source and refit
         if args.relocalize and type(config['selection']['target']) == str:
-            loc = gta.localize(config['selection']['target'], make_plots=True,
+            loc = gta.localize(config['selection']['target'], make_plots=args.make_plots,
                                 free_background = fit_config['reloc_bkg'],
                                 free_radius = fit_config['reloc_rad'],
                                 update=True)
@@ -271,7 +294,7 @@ def main():
         while max_sqrt_ts >= fit_config['max_sqrt_ts']:
             # run ts and residual maps
             ts_maps = gta.tsmap(args.state,model=model, 
-                write_fits = True, write_npy = True, make_plots = True)
+                write_fits = True, write_npy = True, make_plots = args.make_plots)
             # get the skydirs
             #coords = ts_maps['sqrt_ts'].get_pixel_skydirs()
             coords = ts_maps['sqrt_ts'].geom.get_coord()
@@ -341,9 +364,9 @@ def main():
 
     else:
         ts_maps = gta.tsmap(args.state,model=model, 
-            write_fits = True, write_npy = True, make_plots = True)
+            write_fits = True, write_npy = True, make_plots = args.make_plots)
     try:
-        resid_maps = gta.residmap(args.state,model=model, make_plots=True, write_fits = True, write_npy = True)
+        resid_maps = gta.residmap(args.state,model=model, make_plots=args.make_plots, write_fits = True, write_npy = True)
     except:
         logging.error("Residual map computation and plotting failed")
 
@@ -352,7 +375,7 @@ def main():
             sigma = 5., xsteps = 30, ysteps = 31)
 
     if args.createsed:
-        if fit_config['force_free_index']:
+        if fit_config.get('force_free_index', False):
             gta.free_index(config['selection']['target'], free = False)
             gta.free_index(config['selection']['target'], free = True)
         gta.load_roi(args.state) # reload the average spectral fit
@@ -363,13 +386,28 @@ def main():
                         #free_radius =  #sed_config['free_radius'],
                         #free_background= #sed_config['free_background'],
                         #free_pars = fa.allnorm,
-                        #make_plots = sed_config['make_plots'],
+                        make_plots = args.make_plots,
                         #cov_scale = sed_config['cov_scale'],
                         #use_local_index = sed_config['use_local_index'],
                         #use_local_index = True, # sed_config['use_local_index'],
                         #bin_index = sed_config['bin_index']
                         )
         logging.info("SED covariance: {0}".format(sed['param_covariance']))
+
+        # generate additional SEDs
+        for src in fit_config.get('additional_seds', []):
+            sed = gta.sed(src,
+                          prefix = args.state,
+                          #outfile = 'sed.fits',
+                          #free_radius =  #sed_config['free_radius'],
+                          #free_background= #sed_config['free_background'],
+                          #free_pars = fa.allnorm,
+                          make_plots = args.make_plots,
+                          #cov_scale = sed_config['cov_scale'],
+                          #use_local_index = sed_config['use_local_index'],
+                          #use_local_index = True, # sed_config['use_local_index'],
+                          #bin_index = sed_config['bin_index']
+                          )
 
     if args.srcprob:
         logging.info("Running srcprob with srcmdl {0:s}".format('avgspec'))

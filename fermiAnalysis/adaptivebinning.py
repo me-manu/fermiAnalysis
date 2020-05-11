@@ -5,10 +5,10 @@ import pyIrfLoader as irf_loader
 from astropy.io import fits
 from astropy.table import Table
 from astropy.coordinates import SkyCoord
-from ROOT import gROOT
 import fermiAnalysis
 import time
 try:  
+    from ROOT import gROOT
     print "Loading macro"
     gROOT.LoadMacro(path.join(path.dirname(fermiAnalysis.__file__),
                                 "TS_estimate_P8_C.so"))
@@ -19,11 +19,14 @@ except:
     except:
         gROOT.LoadMacro(path.join(path.dirname(fermiAnalysis.__file__),
                                 "TS_estimate_P8.C"))
-from ROOT import get_evtlim
-from ROOT import initialize_TS, get_E1
-from ROOT import Glob_mult
-from ROOT import feed_sources
-from ROOT import Get_time_unc_mult, Get_flux_mult_src_minuit, Get_unc_mult
+try:
+    from ROOT import get_evtlim
+    from ROOT import initialize_TS, get_E1
+    from ROOT import Glob_mult
+    from ROOT import feed_sources
+    from ROOT import Get_time_unc_mult, Get_flux_mult_src_minuit, Get_unc_mult
+except ImportError as e:
+    print "There was a problem loading the ROOT functions: {0}".format(e)
 from array import array
 
 def comp_E1(gta):
