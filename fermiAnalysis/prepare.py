@@ -18,8 +18,8 @@ from glob import glob
 from fermiAnalysis.defaults import AnalysisDefaults as ad
 from fermiAnalysis.tools import *
 from fermiAnalysis.gtprep import *
-from haloanalysis.batchfarm.utils import copy2scratch
-from haloanalysis.batchfarm.lsf import init_lsf
+from fermiAnalysis.batchfarm.utils import copy2scratch
+from fermiAnalysis.batchfarm.lsf import init_lsf
 from numpy import ndarray,savetxt
 from fermipy.gtanalysis import GTAnalysis
 from fermipy.ltcube import LTCube

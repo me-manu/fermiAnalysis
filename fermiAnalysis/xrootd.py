@@ -8,7 +8,7 @@ from subprocess import call
 import argparse
 from glob import glob
 from fermiAnalysis.tools import *
-from haloanalysis.batchfarm import lsf,utils
+from fermiAnalysis.batchfarm import lsf,utils
 import shlex
 import copy
 from time import sleep

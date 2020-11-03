@@ -1,4 +1,4 @@
-from haloanalysis.batchfarm import utils,lsf
+from fermiAnalysis.batchfarm import utils,lsf
 from os import path
 import os
 import yaml
@@ -15,7 +15,10 @@ def init_gta(configfile, i = 1, logging_level = "INFO", tsmin = 100):
     solar flares
     """
     utils.init_logging(logging_level)
-    config = yaml.load(open(configfile))
+    if isinstance(configfile, dict):
+        config = configfile
+    else:
+        config = yaml.load(open(configfile))
     tmpdir, job_id = lsf.init_lsf()
     if not job_id:
         job_id = i 

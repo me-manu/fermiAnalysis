@@ -12,6 +12,7 @@ import fermiAnalysis as fa
 import subprocess
 import copy
 import string
+import shlex
 from fermiAnalysis import adaptivebinning as ab
 
 def calculate_exposure(srcconf,earray):
@@ -538,9 +539,9 @@ def set_src_spec_pl(gta, src, e0 = None, e0_free = False):
     gta.set_source_spectrum(src,spectrum_type = 'PowerLaw', spectrum_pars= pars)
     logging.info('Changed spectrum of {0:s} to power law'.format(src))
     logging.info('New source parameters are: {0}'.format(gta.roi.get_source_by_name(src).spectral_pars))
-    return gta
+    return gta, "Index"
 
-def set_src_spec_plexpcut(gta, src, e0 = None, e0_free = False):
+def set_src_spec_plexpcut(gta, src, e0 = None, e0_free = False, index2_free=True, index2=1.):
     """
     Set an arbitrary source spectrum to a power law
     with exponential cut off 
@@ -625,17 +626,17 @@ def set_src_spec_plexpcut(gta, src, e0 = None, e0_free = False):
                         name= 'Cutoff', scale= 1.0,
                         value= e0 * 2.)
     pars['Index2'] =  dict(error= np.nan, 
-                            free = True, 
+                            free = index2_free, 
                             max= 2.0, min= 0.0, 
                             name= 'Index2', scale= 1.0,
-                            value= 1.)
+                            value= index2)
 
     gta.set_source_spectrum(src,spectrum_type = 'PLSuperExpCutoff', spectrum_pars= pars)
     logging.info('Changed spectrum of {0:s} to PLSuperExpCutoff'.format(src))
     logging.info('New source parameters are: {0}'.format(gta.roi.get_source_by_name(src).spectral_pars))
-    return gta
+    return gta, "Index1"
 
-def add_ebl_atten(gta, src, z, eblmodel = 'dominguez', force_lp= False):
+def add_ebl_atten(gta, src, z, eblmodel='dominguez', force_lp=False):
     """
     Change the source model of a source to include EBL attenuation
 
@@ -671,6 +672,7 @@ def add_ebl_atten(gta, src, z, eblmodel = 'dominguez', force_lp= False):
     else:
         new_spec = 'EblAtten::{0:s}'.format(m['SpectrumType'])
         new_spec_dict = m.spectral_pars
+
     if m['SpectrumType'] == 'PowerLaw': # only PL2 exists with EBL attenuation in glorious ST
         new_spec += '2'
         new_spec_dict['LowerLimit'] = dict(value = 10.**gta.log_energies[0])
@@ -684,29 +686,55 @@ def add_ebl_atten(gta, src, z, eblmodel = 'dominguez', force_lp= False):
     logging.info("Using EBL model {0:s} with ST id {1:n}".format(
         eblmodel, ebl_st_model_list.index(eblmodel)))
     new_spec_dict['ebl_model'] = dict(
-            error = np.nan, 
-            free =  False, 
-            min = 0, max = len(ebl_st_model_list),
-            name = 'ebl_model', scale = 1.0,
+            error=np.nan, 
+            free=False, 
+            min=0, max=len(ebl_st_model_list),
+            name = 'ebl_model', scale=1.0,
             value= ebl_st_model_list.index(eblmodel))
     new_spec_dict['redshift'] = dict(
-            error = np.nan, 
-            free =  False, 
-            max = 2., min = 0.,
-            name = 'redshift', scale = 1.0,
+            error=np.nan, 
+            free=False, 
+            max=5., min = 0.,
+            name='redshift', scale=1.0,
             value= z)
     new_spec_dict['tau_norm'] = dict(
-            error = np.nan, 
-            free =  False, 
-            max = 2., min = 0.,
-            name = 'tau_norm', scale = 1.0,
-            value= 1.)
+            error=np.nan, 
+            free=False, 
+            max=2., min=0.,
+            name='tau_norm', scale=1.0,
+            value=1.)
     logging.info('Changing spectrum of {0:s} to {1:s}...'.format(src, new_spec))
     logging.info('Dictionary: {0}'.format(new_spec_dict))
     gta.set_source_spectrum(src,spectrum_type=new_spec, spectrum_pars= new_spec_dict)
     logging.info('Changed spectrum of {0:s} to {1:s}'.format(src, new_spec))
     logging.info('New source parameters are: {0}'.format(gta.roi.get_source_by_name(src).spectral_pars))
     return gta
+
+def change_src_par(gta, src_name, par_name, par_value, par_scale=1.):
+    """
+    Change the parameter of a source by manipulating the likelihood object
+    """
+    gta.logger.info("Setting {0:s} parameter {1:s} to {2:.3f} with scale {3:.3f}".format(
+                    src_name, par_name, par_value, par_scale))
+    # get central source name in likelihood object
+    like_name = gta.roi.get_source_by_name(src_name).name
+    # get the parameter index in the likelihood object
+    idx = gta.like.par_index(like_name, par_name)
+    # set the scale
+    gta.like[idx].setScale(par_scale)
+    # make sure that the desired new value 
+    # is not outside of current bounds
+    bounds = list(gta.like[idx].getBounds())
+    if par_value < bounds[0]:
+        bounds[0] = par_value / 10.
+    if par_value > bounds[1]:
+        bounds[1] = par_value * 10.
+    gta.like[idx_norm].setBounds(bounds[0],bounds[1])
+    gta.logger.info("Set bounds of {0:s} parameter {1:s} to {2}".format(src_name, par_name, bounds))
+    gta.like[idx] = par_value
+    #TODO: do I need to return the gta object?
+
+
 
 def add_columns(columns, fitsfile, hdu, createsedlc = False, sedname = 'lc_sed*.fits'):
     with fits.open(fitsfile) as f:
@@ -1016,3 +1044,120 @@ def get_best_fit_covar(gta, target, prefix = ''):
     np.save(path.join(gta.workdir, prefix + '_{0:s}_best-fit-pars'.format(target.replace(' ','').lower())), 
             o)
     return o
+
+def run_gtlike_unbinned(gta, model, refit=False):
+    """
+    Run gtlike for an unbinned analysis
+    """
+    # run gtlike for each component
+    # no summed likelihood here
+    command_all = "gtlike "
+    command_all += "refit={0:s} ".format("yes" if refit else "no")
+    command_all += "statistic=UNBINNED "
+    command_all += "optimizer={0:s} ".format(gta.config['optimizer']['optimizer'])
+    command_all += "ftol={0:f} ".format(gta.config['optimizer']['tol'])
+    #command_all += "chatter={0:n} ".format(gta.config['optimizer']['verbosity'])
+    command_all += "chatter={0:n} ".format(2)
+    for i, c in enumerate(gta.components):
+        command = command_all
+        command += "scfile={0:s} ".format(c.data_files['scfile'])
+        command += "sfile={0:s} ".format(path.join(c.workdir, "{0:s}_{1:02}_unbinned.xml".format(model, i)))
+        command += "evfile={0:s} ".format(c.files['ft1'])
+        #command += "evfile={0:s} ".format(c.files['ft1_filtered'])
+        expmap = path.join(c.workdir, 
+                    'expmap{0[file_suffix]:s}.fits'.format(c.config))
+        command += "expmap={0:s} ".format(expmap)
+        command += "expcube={0:s} ".format(c.files['ltcube'])
+        command += "srcmdl={0:s} ".format(c.get_model_path(model))
+        command += "irfs={0:s} ".format(c.config['gtlike']['irfs'])
+        logging.info("Running gtlike")
+        logging.info(command)
+        p = subprocess.Popen(shlex.split(command),
+                             stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE)     
+        #logging.info("Done.")
+        output, err = p.communicate()
+        r = {}
+        try:
+            r['logl'] = -1. * float(output[output.find('-log(Likelihood):')+17:].split()[0])
+            r['counts'] = int(output[output.find("Total number of observed counts:")+32:].split("\n")[0])       
+            r['npred'] = float(output[output.find("Total number of model events:")+29:].split("\n")[0])       
+            key = ''
+            for line in output.split('\n'):
+                if "Total number" in line:
+                    break
+                if 'FGL' in line or 'galdiff' in line or 'isodiff' in line:
+                    key = line.rstrip(':')
+                    r[key] = {}
+                if len(key) and not key in line and ":" in line:
+                    r[key][line.split(":")[0].strip()] = line.split(":")[1].strip()
+        except:
+            logging.error("gtlike failed with error messages")
+            logging.error(err)
+
+        return r 
+
+def check_repeated_cuts(evfile):
+    """
+    Remove repeated cuts in header of an ft1 file
+    """
+    logging.info("Checking for repeated key words in FT1 header")
+
+    f = fits.open(evfile)
+    vals= [f[1].header['DSVAL{0:n}'.format(i)] for i in range(1, f[1].header['NDSKEYS']+1)]
+    types = [f[1].header['DSTYP{0:n}'.format(i)] for i in range(1, f[1].header['NDSKEYS']+1)]
+    units = [f[1].header['DSUNI{0:n}'.format(i)] for i in range(1, f[1].header['NDSKEYS']+1)]
+
+    unique_vals = []
+    unique_types = []
+    unique_units = []
+
+    if not len(vals) == len(set(vals)):
+        logging.warning("Found repeated key words in FT1 header, which will be removed")
+        for i, t in enumerate(types):
+            if not t in unique_types:
+                unique_types.append(t)
+                unique_vals.append(vals[i])
+                unique_units.append(units[i])
+
+        # remove keywords
+        for i in range(len(unique_types)+1, f[1].header['NDSKEYS']+1):
+            for key in ['VAL', 'UNI', 'TYP']:
+                f[1].header.pop('DS{0:s}{1:n}'.format(key, i), None)
+        
+        for i, t in enumerate(unique_types):
+            f[1].header['DSTYP{0:n}'.format(i+1)] = t
+            f[1].header['DSUNI{0:n}'.format(i+1)] = unique_units[i]
+            f[1].header['DSVAL{0:n}'.format(i+1)] = unique_vals[i]
+        f[1].header['NDSKEYS'] = len(unique_types)
+        f.writeto(evfile, overwrite=True)
+    return f[1].header
+
+def run_unbinned_pipeline(gta, model, overwrite=False, refit=False):
+    """
+    Using parts of the standard fermipy pipeline, 
+    run the diffuse analysis. 
+    This assumes that the livetime cube is already 
+    precomputed.
+
+    Parameters
+    ----------
+    gta: `~fermipy.gtanalysis.GTAnalysis` object
+        the fermipy analysis object
+
+    model: str
+        name of the input model
+    """
+    # compute the unbinned exposure 
+    for i, c in enumerate(gta.components):
+        _ = check_repeated_cuts(c.files['ft1'])
+    gta.compute_expmap(overwrite=overwrite)
+
+    # compute diffuse response 
+    gta.compute_diffrsp(xmlfile=model)
+
+    # run gtlike
+    result = run_gtlike_unbinned(gta, model, refit=refit)
+    return result
+

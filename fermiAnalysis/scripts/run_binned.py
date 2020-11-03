@@ -110,7 +110,10 @@ def main():
         return pps
 
     elif args.state == 'setup':
-        gta.setup()
+        try:
+            gta.setup()
+        except RuntimeError as e:
+            logging.error("setup ended with runtime error:\n{0}.".format(e))
 
         if args.psf:
             logging.info("Running psf")
@@ -119,6 +122,8 @@ def main():
         if args.drm:
             logging.info("Running drm")
             gta.compute_drm(overwrite = True)
+
+        return None, gta, fit_config
 
 
     elif args.state.find('avgspec') >= 0:
@@ -175,13 +180,13 @@ def main():
             m = gta.roi.get_source_by_name(config['selection']['target'])
             if not m['SpectrumType'] == fit_config['source_spec'] or args.forcespec:
                 if fit_config['source_spec'] == 'PowerLaw':
-                    gta = set_src_spec_pl(gta, gta.get_source_name(config['selection']['target']), 
-                                        fit_config['pivotE'] if 'pivotE' in fit_config.keys() else None,
-                                        e0_free = args.pivotE_free)
+                    gta, _ = set_src_spec_pl(gta, gta.get_source_name(config['selection']['target']), 
+                                             fit_config['pivotE'] if 'pivotE' in fit_config.keys() else None,
+                                             e0_free = args.pivotE_free)
                 elif fit_config['source_spec'] == 'PLSuperExpCutoff':
-                    gta = set_src_spec_plexpcut(gta, gta.get_source_name(config['selection']['target']),
-                                        fit_config['pivotE'] if 'pivotE' in fit_config.keys() else None,
-                                        e0_free = args.pivotE_free)
+                    gta, _ = set_src_spec_plexpcut(gta, gta.get_source_name(config['selection']['target']),
+                                                   fit_config['pivotE'] if 'pivotE' in fit_config.keys() else None,
+                                                   e0_free = args.pivotE_free)
                 #elif fit_config['source_spec'] == 'LogParabola':
                     #gta = set_src_spec_lp(gta, gta.get_source_name(config['selection']['target']))
                 else:
@@ -410,8 +415,8 @@ def main():
                           )
 
     if args.srcprob:
-        logging.info("Running srcprob with srcmdl {0:s}".format('avgspec'))
-        gta.compute_srcprob(xmlfile = 'avgspec', overwrite = True)
+        logging.info("Running srcprob with srcmdl {0:s}".format(args.state))
+        gta.compute_srcprob(xmlfile=args.state, overwrite = True)
 
     return f, gta, fit_config
 

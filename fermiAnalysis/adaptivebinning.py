@@ -42,7 +42,117 @@ def comp_E1(gta):
     logging.error("{0}".format([flux,index, l, b, emin, emax]))
     return get_E1(flux,index, l, b, emin, emax)
 
-def comp_exposure_phi(gta, energy = None):
+def comp_exposure_phi_new(gta, energy=None, nevt_max=None):
+    """
+    Compute the approximate exposure 
+    trying to speed things up on 09/21/2020
+
+    Parameters
+    ----------
+    gta: `~fermipy.GTAnalysis`
+        The analysis object
+
+    {options}
+
+    energy: float or None
+        The energy at which the exposure is evaluated.
+        If none, central energy from selection is used
+    """
+    from tqdm import tqdm
+
+    # load the effective areas
+    irf_loader.Loader_go()
+    irfs = gta.config['gtlike']['irfs']
+    factory = irf_loader.IrfsFactory_instance()
+    fronta = factory.create(irfs + "::FRONT")
+    backa = factory.create(irfs + "::BACK")
+    aeff_fa = fronta.aeff()
+    aeff_ba = backa.aeff()
+
+    if type(energy) == type(None):
+        energy = float(np.sqrt(gta.config['selection']['emin'] * \
+                            gta.config['selection']['emax']))
+
+    # load the FT1 and FT2 files
+    ft1fits = fits.open(gta.config['data']['evfile'])
+    ft2fits = fits.open(gta.config['data']['scfile'])
+    TSTART = float(ft1fits['EVENTS'].header["TSTART"]) - 30.
+    TSTOP = float(ft1fits['EVENTS'].header["TSTOP"]) + 30.
+    nevt = int(ft2fits['SC_DATA'].header['NAXIS2']) if nevt_max is None else nevt_max
+    src = gta.roi[gta.config['selection']['target']]
+    c0 = SkyCoord(ra = src.radec[0],dec =  src.radec[1], unit = 'deg')
+
+    # the GTIs from the FT1 file
+    ft1_gti_start = ft1fits['GTI'].data.field('START')
+    ft1_gti_stop = ft1fits['GTI'].data.field('STOP')
+
+    # central times of GTI in SC file
+    tcen = 0.5 * (ft2fits['SC_DATA'].data.field("START") + \
+                    ft2fits['SC_DATA'].data.field("STOP"))
+    mask = (tcen > TSTART) & (tcen < TSTOP)
+
+    # Spacecraft coordinates
+    cz = SkyCoord(ra = ft2fits['SC_DATA'].data.field('RA_SCZ'),
+                    dec = ft2fits['SC_DATA'].data.field('DEC_SCZ'),
+                    unit = 'deg')
+    cx = SkyCoord(ra = ft2fits['SC_DATA'].data.field('RA_SCX'),
+                    dec = ft2fits['SC_DATA'].data.field('DEC_SCX'),
+                    unit = 'deg')
+    czen = SkyCoord(ra = ft2fits['SC_DATA'].data.field('RA_ZENITH'),
+                    dec = ft2fits['SC_DATA'].data.field('DEC_ZENITH'),
+                    unit = 'deg')
+
+    sep_z0 = c0.separation(cz)
+    sep_zenith0 = c0.separation(czen)
+
+    id = np.cos(np.radians(sep_z0))
+
+    # compute phi direction to src in SC coordinates
+    phi = get_phi(cz = cz, cx = cx, c0 = c0)
+
+    # livetime
+    livetime = ft2fits['SC_DATA'].data.field('LIVETIME')
+    
+    # loop over GTIs in SC file
+    af, ab = np.zeros(nevt), np.zeros(nevt)
+    logging.info("Calculating exposure for E = {0:.2f} MeV".format(energy))
+
+    mask = mask & (sep_zenith0.value <= gta.config['selection']['zmax'])
+    t1 = time.time()
+    for i in tqdm(range(nevt)):
+        if not mask[i]: continue
+
+        #igti = 0
+
+        # find the right GTI for the considered SC GTI 
+        #while igti < ft1_gti_start.size and ft1_gti_start[igti] < tcen[i]:
+            #igti += 1
+            #if igti >= ft1_gti_start.size: 
+                #break
+        m1 = tcen[i] >= ft1_gti_start
+        m2 = tcen[i] < ft1_gti_stop
+        if not (m1 & m2).sum():
+            continue
+
+#        if tcen[i] > ft1_gti_start[igti - 1] and tcen[i] < ft1_gti_stop[igti - 1]:
+#            af[i] = aeff_fa.value(energy,
+#                            float(sep_z0[i].value),
+#                            float(phi[i])) *livetime[i]
+#            ab[i] = aeff_ba.value(energy,
+#                            float(sep_z0[i].value),
+#                            float(phi[i])) *livetime[i]
+        af[i] = aeff_fa.value(energy,
+                        float(sep_z0[i].value),
+                        float(phi[i])) *livetime[i]
+        ab[i] = aeff_ba.value(energy,
+                        float(sep_z0[i].value),
+                        float(phi[i])) *livetime[i]
+
+    print ("it took {0:.2f}s".format(time.time() - t1))
+    logging.info("Done")
+    return tcen,af,ab
+
+def comp_exposure_phi(gta, energy = None, nevt_max=None):
     """
     Compute the approximate exposure 
 
@@ -74,9 +184,9 @@ def comp_exposure_phi(gta, energy = None):
     # load the FT1 and FT2 files
     ft1fits = fits.open(gta.config['data']['evfile'])
     ft2fits = fits.open(gta.config['data']['scfile'])
-    TSTART = ft1fits['EVENTS'].header["TSTART"] - 30.
-    TSTOP = ft1fits['EVENTS'].header["TSTOP"] + 30.
-    nevt = ft2fits['SC_DATA'].header['NAXIS2']
+    TSTART = float(ft1fits['EVENTS'].header["TSTART"]) - 30.
+    TSTOP = float(ft1fits['EVENTS'].header["TSTOP"]) + 30.
+    nevt = int(ft2fits['SC_DATA'].header['NAXIS2']) if nevt_max is None else nevt_max
     src = gta.roi[gta.config['selection']['target']]
     c0 = SkyCoord(ra = src.radec[0],dec =  src.radec[1], unit = 'deg')
 
@@ -172,9 +282,9 @@ def comp_exposure_phi_v2(gta, energy = None):
     # load the FT1 and FT2 files
     ft1fits = fits.open(gta.config['data']['evfile'])
     ft2fits = fits.open(gta.config['data']['scfile'])
-    TSTART = ft1fits['EVENTS'].header["TSTART"] - 30.
-    TSTOP = ft1fits['EVENTS'].header["TSTOP"] + 30.
-    nevt = ft2fits['SC_DATA'].header['NAXIS2']
+    TSTART = float(ft1fits['EVENTS'].header["TSTART"]) - 30.
+    TSTOP = float(ft1fits['EVENTS'].header["TSTOP"]) + 30.
+    nevt = int(ft2fits['SC_DATA'].header['NAXIS2'])
     src = gta.roi[gta.config['selection']['target']]
     c0 = SkyCoord(ra = src.radec[0],dec =  src.radec[1], unit = 'deg')
 
