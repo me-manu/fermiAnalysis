@@ -1790,6 +1790,7 @@ def fit_igmf_halo_scan(gta, modelname,
     files = glob.glob(filenames)
     gta.logger.info("Found {0:n} template files in {1:s}".format(len(files), filenames))
 
+    return gta
     if not len(files):
         raise ValueError("No template files found")
 
@@ -1886,7 +1887,7 @@ def extract_halo_likelihood(config,
     halo_source_dict['Spatial_Filename'] = os.path.join(halo_template_files[i])
     gta.logger.info("Using Spatial File {0:s}".format(halo_source_dict['Spatial_Filename']))
     # reload base model without halo
-    gta.load_xml('base')
+    gta.load_roi('base')
     # set the spectral parameters of the central source
     gta.set_parameter(src_name, injection_par2_name, p2,
                       update_source=False)
