@@ -31,7 +31,7 @@ def main():
 
     args = parser.parse_args()
 
-    gta, config, fit_config, job_id  = setup.init_gta(args.conf, i = args.i, logging_level = "INFO")
+    gta, config, fit_config, job_id = setup.init_gta(args.conf, i=args.i, logging_level = "INFO")
     gta.logger.info('Running fermipy setup')
 
     init_matplotlib_backend()

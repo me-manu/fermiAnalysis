@@ -22,10 +22,13 @@ from scipy.interpolate import UnivariateSpline as USpline
 import numpy as np
 from astropy.table import Column, Table
 from fermipy.utils import get_parameter_limits
-from fermiAnalysis.utils import set_src_spec_plexpcut, set_src_spec_pl, change_src_par, add_ebl_atten
+from fermipy.gtanalysis import GTAnalysis
+from fermiAnalysis.utils import set_src_spec_plexpcut, set_src_spec_pl, add_ebl_atten
 import fermiAnalysis as fa
-from LikelihoodState import LikelihoodState
+#from LikelihoodState import LikelihoodState
 from collections import OrderedDict
+from itertools import repeat
+from multiprocessing import Pool
 
 halo_source_dict_default = {
     'SpectrumType' : 'PowerLaw', 
@@ -1616,6 +1619,7 @@ def fit_igmf_halo_scan(gta, modelname,
                        loge_bounds=None,
                        z=None, 
                        ebl_model_name='dominguez',
+                       pool_size=1,
                        optimizer=None):
     """
     Fit a cascade halo template on top of a point source.
@@ -1728,21 +1732,21 @@ def fit_igmf_halo_scan(gta, modelname,
             gta, index_par_name = set_src_spec_pl(gta, gta.get_source_name(src_name), 
                                                   e0=None,
                                                   e0_free=False)
-        elif injection_spectrum == 'PLSuperExpCutoff' or injection_sprectrum == 'PLExpCutoff':
+        elif injection_spectrum == 'PLSuperExpCutoff' or injection_spectrum == 'PLExpCutoff':
             gta, index_par_name = set_src_spec_plexpcut(gta, gta.get_source_name(src_name),
                                                         e0=None,
                                                         e0_free=False,
                                                         index2=1.,
                                                         index2_free=False)
         else:
-            raise ValueError("Injection spectrum {0:s} not supported".format(injection_sprectrum))
+            raise ValueError("Injection spectrum {0:s} not supported".format(injection_spectrum))
         src = gta.roi.get_source_by_name(src_name)
 
-    if not z is None and not 'Ebl' in src['SpectrumType']:
+    if z is not None and 'Ebl' not in src['SpectrumType']:
         gta = add_ebl_atten(gta, src_name, z, eblmodel=ebl_model_name)
 
     if loge_bounds is not None:
-        gta.set_energy_range(loge_bounds[0],loge_bounds[1])
+        gta.set_energy_range(loge_bounds[0], loge_bounds[1])
 
     # set spectral parameters to original values
     gta.set_norm(src_name, norm)
@@ -1776,9 +1780,7 @@ def fit_igmf_halo_scan(gta, modelname,
     halo_data = []
     halo_fit_results = []
     halo_profile_tied = []
-    injection_index = []
-    injection_par2 = []
-        
+
     gta.logger.info("Base model:")
     gta.print_roi()
     gta.print_model()
@@ -1791,160 +1793,34 @@ def fit_igmf_halo_scan(gta, modelname,
     if not len(files):
         raise ValueError("No template files found")
 
-    # loop over halo template files
-    for i, f in enumerate(files):
+        # with multiprocessing
 
-        # get the used spectral parameters
-        template = fits.open(f)
-        spectral_parameters = yaml.safe_load(template[0].header["META"])['spectral_parameters']
+    if pool_size > 1:
+        with Pool(processes=pool_size) as pool:
+            result = pool.starmap(extract_halo_likelihood,
+                                 zip(list(idx), repeat(analysis)))
 
-        # get the simulation parameters
-        sim_parameters = yaml.safe_load(template[0].header["META"])['sim_config']
-
-        # spectral index
-        if index_par_name == 'Index1' and index_par_name not in spectral_parameters.keys() and "Index" in spectral_parameters.keys():
-            p = spectral_parameters["Index"]
-            p_name = "Index"
-        else:
-            p = spectral_parameters[index_par_name]
-            p_name = index_par_name
-        # second spectral parameter
-        p2 = spectral_parameters[injection_par2_name]
-        if injection_par2_name == 'Cutoff':
-            p2 = u.Quantity(p2).to("MeV").value
-
-        injection_index.append(p)
-        injection_par2.append(p2)
-
-        # used normalization and scale in halo template simulation
-        prefactor0 = u.Quantity(spectral_parameters[injection_norm_name]).to("s-1 cm-2 MeV-1").value
-        scale0 = u.Quantity(spectral_parameters[injection_scale_name]).to("MeV").value
-
-        gta.logger.info('Fitting central source in Halo with index {0:.3f} and {1:s} {2:.3f}'.format(p, injection_par2_name, p2))
-        
-        model_idx = i
-        outprefix = "{0:s}".format(halo_template_suffix)
-
-        halo_source_dict['Spatial_Filename'] = os.path.join(f)
-        gta.logger.info("Using Spatial File {0:s}".format(halo_source_dict['Spatial_Filename']))
-
-        # reload base model without halo
-        gta.load_xml('base')
-        
-        # set the spectral parameters of the central source
-        gta.set_parameter(src_name, injection_par2_name, p2,
-                          update_source=False)
-
-        gta.set_parameter(src_name, index_par_name,-1. * p,
-                          update_source=False)
-
-        # add the halo
-        try:
-            gta.add_source(halo_source_name, halo_source_dict, free=False)
-        except RuntimeError as e:
-            gta.logger.error("Couldn't add halo source")
-            gta.logger.error("Error was {0}".format(e))
-            gta.logger.error("Stopping the loop and saving output")
-            break
-
-        gta.free_norm(halo_source_name)
-
-        new_norm = set_halo_normalization(gta, src_name, halo_source_name,
-                                          prefactor0, scale0,
-                                          update_halo=True,
-                                          injection_norm_name=injection_norm_name,
-                                          injection_scale_name=injection_scale_name,
-                                          index=p)
-
-        logging.debug("npred halo before fit: {0}".format(gta.model_counts_spectrum(halo_source_name,
-                                                              gta.loge_bounds[0],
-                                                              gta.loge_bounds[1])))
-
-        # perform the fit
-        # treating the halo and source spectral normalizations as independent parameters
-        fit_result = gta.fit(optimizer=optimizer)
-        # TODO: check if fit should be performed like this:
-        #gta.fit(update=False, optimizer=optimizer)
-        gta.print_params(loglevel=logging.INFO)
-        gta.print_model(loglevel=logging.INFO)
-        #gta.update_source(halo_source_name,reoptimize=True,
-        #                  optimizer={'optimizer' : optimizer})
-        #gta.update_source(src_name,reoptimize=True,
-        #                  optimizer={'optimizer' : optimizer})
-
-        halo_modelname = '{0:s}-{1:03n}id'.format(outprefix, i)
-        halo_modelname = halo_modelname.replace('.','p')
-
-        gta.write_roi(halo_modelname,
-                      make_plots=False)
-
-        if generate_maps:
-            gta.tsmap(halo_modelname, model=model_pl20,
-                      #loge_bounds=loge_bounds,
-                      make_plots=True)
-            gta.residmap(halo_modelname, model=model3,
-                         #loge_bounds=loge_bounds,
-                         make_plots=True)
-
-        # perform 2D likelihood fit over source and halo norm
-        o = profile_halo_src_norms(gta, src_name, halo_source_name,
-                                   scale0, prefactor0,
-                                   index=p, 
-                                   src_norm_name=injection_norm_name,
-                                   halo_norm_name='Prefactor',
-                                   src_scale_name=injection_scale_name,
-                                   reoptimize=True,
-                                   savestate=True,
-                                   sigma=3.,
-                                   xsteps=30,
-                                   ysteps=31)
-
-        spectral_parameters.update({'Spatial_Filename': f})
-        o.update(spectral_parameters)
-        o.update(sim_parameters)
-        halo_profile_tied += [o]
-        
-        # make sure to reload fit
-        gta.load_xml(halo_modelname)
-
-        # compute the SEDs 
-        if generate_seds:
-            gta.sed(src_name,
-                    prefix='src_{0:s}_cov'.format(halo_modelname),
-                    outfile='src_{0:s}_cov'.format(outprefix),
-                    free_radius=free_radius_sed,
-                    cov_scale=cov_scale,
-                    optimizer={'optimizer' : 'MINUIT'},
-                    make_plots=False)
-
-            gta.sed(halo_source_name,
-                    prefix='halo_{0:s}_cov'.format(halo_modelname),
-                    outfile='halo_{0:s}_cov'.format(outprefix),
-                    free_radius=None, #free_radius_sed, # does not work for diffuse sources
-                    cov_scale=cov_scale,
-                    optimizer={'optimizer' : 'MINUIT'},
-                    make_plots=False)
-
-        ul_flux = get_parameter_limits(gta.roi[halo_source_name]['flux_scan'],
-                                       gta.roi[halo_source_name]['loglike_scan'])
-        ul_eflux = get_parameter_limits(gta.roi[halo_source_name]['eflux_scan'],
-                                        gta.roi[halo_source_name]['loglike_scan'])
-
-        gta.roi[halo_source_name]['flux_err'] = ul_flux['err']
-        gta.roi[halo_source_name]['eflux_err'] = ul_eflux['err']
-            
-        gta.logger.info('%{0:s} Injection Index: {1:6.3f} Injection {5:s}: {2:6.2f} TS: {3:6.2f} Flux: {4:8.4g}'.format(
-                        halo_modelname,p,p2,
-                        gta.roi[halo_source_name]['ts'],
-                        gta.roi[halo_source_name]['flux'], 
-                        injection_par2_name
-                        )
-            )
-    
-        halo_fit_results += [fit_result]
-        halo_data += [copy.deepcopy(gta.roi[halo_source_name].data)]
-
-        gta.delete_source(halo_source_name, save_template=False) 
+    else:
+        # loop over halo template files
+        for i, f in enumerate(files):
+            o, hd, outprefix, p_name = extract_halo_likelihood(copy.deepcopy(gta.config),
+                                                               i,
+                                                               files,
+                                                               src_name,
+                                                               halo_source_name,
+                                                               halo_source_dict,
+                                                               halo_template_suffix,
+                                                               injection_par2_name=injection_par2_name,
+                                                               injection_norm_name=injection_norm_name,
+                                                               injection_scale_name=injection_scale_name,
+                                                               index_par_name=index_par_name,
+                                                               cov_scale=cov_scale,
+                                                               free_radius_sed=free_radius_sed,
+                                                               generate_maps=generate_maps,
+                                                               generate_seds=generate_seds,
+                                                               optimizer=optimizer)
+        halo_profile_tied.append(o)
+        halo_fit_results.append(hd)
 
     np.save(os.path.join(gta.workdir, '{0:s}_data.npy'.format(outprefix)), halo_data)
     np.save(os.path.join(gta.workdir, '{0:s}_fit_results.npy'.format(outprefix)), halo_fit_results)
@@ -1958,3 +1834,153 @@ def fit_igmf_halo_scan(gta, modelname,
 
     gta.logger.info('Finished IGMF Halo Scan {0:s}'.format(modelname))
     return halo_profile_tied
+
+
+def extract_halo_likelihood(config,
+                            i,
+                            halo_template_files,
+                            src_name,
+                            halo_source_name,
+                            halo_source_dict,
+                            halo_template_suffix,
+                            injection_par2_name='Cutoff',
+                            injection_norm_name='Prefactor',
+                            injection_scale_name='Scale',
+                            index_par_name='Index',
+                            cov_scale=5.,
+                            free_radius_sed=1.,
+                            generate_maps=True,
+                            generate_seds=False,
+                            model_pl20={'SpatialModel': 'PointSource', 'Index': 2.0 },
+                            model3={'SpatialModel': 'Gaussian', 'Index': 2.0, 'SpatialWidth': 0.1 },
+                            optimizer=None):
+    """Extract halo likelihood for one particular halo file"""
+    # get the used spectral parameters
+    template = fits.open(halo_template_files[i])
+    spectral_parameters = yaml.safe_load(template[0].header["META"])['spectral_parameters']
+    # get the simulation parameters
+    sim_parameters = yaml.safe_load(template[0].header["META"])['sim_config']
+    # spectral index
+    if index_par_name == 'Index1' and index_par_name not in spectral_parameters.keys() \
+            and "Index" in spectral_parameters.keys():
+        p = spectral_parameters["Index"]
+        p_name = "Index"
+    else:
+        p = spectral_parameters[index_par_name]
+        p_name = index_par_name
+
+    # second spectral parameter
+    p2 = spectral_parameters[injection_par2_name]
+    if injection_par2_name == 'Cutoff':
+        p2 = u.Quantity(p2).to("MeV").value
+
+    # used normalization and scale in halo template simulation
+    prefactor0 = u.Quantity(spectral_parameters[injection_norm_name]).to("s-1 cm-2 MeV-1").value
+    scale0 = u.Quantity(spectral_parameters[injection_scale_name]).to("MeV").value
+    outprefix = "{0:s}".format(halo_template_suffix)
+
+    gta = GTAnalysis(config, logging={'verbosity': 3})
+    gta.logger.info(
+        'Fitting central source in Halo with index {0:.3f} and {1:s} {2:.3f}'.format(p, injection_par2_name, p2))
+
+    halo_source_dict['Spatial_Filename'] = os.path.join(halo_template_files[i])
+    gta.logger.info("Using Spatial File {0:s}".format(halo_source_dict['Spatial_Filename']))
+    # reload base model without halo
+    gta.load_xml('base')
+    # set the spectral parameters of the central source
+    gta.set_parameter(src_name, injection_par2_name, p2,
+                      update_source=False)
+    gta.set_parameter(src_name, index_par_name, -1. * p,
+                      update_source=False)
+    # add the halo
+    try:
+        gta.add_source(halo_source_name, halo_source_dict, free=False)
+    except RuntimeError as e:
+        gta.logger.error("Couldn't add halo source")
+        gta.logger.error("Error was {0}".format(e))
+        gta.logger.error("Stopping the loop and saving output")
+    #    break
+    gta.free_norm(halo_source_name)
+    new_norm = set_halo_normalization(gta, src_name, halo_source_name,
+                                      prefactor0, scale0,
+                                      update_halo=True,
+                                      injection_norm_name=injection_norm_name,
+                                      injection_scale_name=injection_scale_name,
+                                      index=p)
+    logging.debug("npred halo before fit: {0}".format(gta.model_counts_spectrum(halo_source_name,
+                                                                                gta.loge_bounds[0],
+                                                                                gta.loge_bounds[1])))
+    # perform the fit
+    # treating the halo and source spectral normalizations as independent parameters
+    fit_result = gta.fit(optimizer=optimizer)
+
+    # TODO: check if fit should be performed like this:
+    # gta.fit(update=False, optimizer=optimizer)
+    gta.print_params(loglevel=logging.INFO)
+    gta.print_model(loglevel=logging.INFO)
+    # gta.update_source(halo_source_name,reoptimize=True,
+    #                  optimizer={'optimizer' : optimizer})
+    # gta.update_source(src_name,reoptimize=True,
+    #                  optimizer={'optimizer' : optimizer})
+    halo_modelname = '{0:s}-{1:03n}id'.format(outprefix, i)
+    halo_modelname = halo_modelname.replace('.', 'p')
+    gta.write_roi(halo_modelname,
+                  make_plots=False)
+    if generate_maps:
+        gta.tsmap(halo_modelname, model=model_pl20,
+                  # loge_bounds=loge_bounds,
+                  make_plots=True)
+        gta.residmap(halo_modelname, model=model3,
+                     # loge_bounds=loge_bounds,
+                     make_plots=True)
+    # perform 2D likelihood fit over source and halo norm
+    o = profile_halo_src_norms(gta, src_name, halo_source_name,
+                               scale0, prefactor0,
+                               index=p,
+                               src_norm_name=injection_norm_name,
+                               halo_norm_name='Prefactor',
+                               src_scale_name=injection_scale_name,
+                               reoptimize=True,
+                               savestate=True,
+                               sigma=3.,
+                               xsteps=30,
+                               ysteps=31)
+    spectral_parameters.update({'Spatial_Filename': halo_template_files[i]})
+    o.update(spectral_parameters)
+    o.update(sim_parameters)
+    # make sure to reload fit
+    gta.load_xml(halo_modelname)
+    # compute the SEDs
+    if generate_seds:
+        gta.sed(src_name,
+                prefix='src_{0:s}_cov'.format(halo_modelname),
+                outfile='src_{0:s}_cov'.format(outprefix),
+                free_radius=free_radius_sed,
+                cov_scale=cov_scale,
+                optimizer={'optimizer': 'MINUIT'},
+                make_plots=False)
+
+        gta.sed(halo_source_name,
+                prefix='halo_{0:s}_cov'.format(halo_modelname),
+                outfile='halo_{0:s}_cov'.format(outprefix),
+                free_radius=None,  # free_radius_sed, # does not work for diffuse sources
+                cov_scale=cov_scale,
+                optimizer={'optimizer': 'MINUIT'},
+                make_plots=False)
+    ul_flux = get_parameter_limits(gta.roi[halo_source_name]['flux_scan'],
+                                   gta.roi[halo_source_name]['loglike_scan'])
+    ul_eflux = get_parameter_limits(gta.roi[halo_source_name]['eflux_scan'],
+                                    gta.roi[halo_source_name]['loglike_scan'])
+    gta.roi[halo_source_name]['flux_err'] = ul_flux['err']
+    gta.roi[halo_source_name]['eflux_err'] = ul_eflux['err']
+    gta.logger.info('%{0:s} Injection Index: {1:6.3f} Injection {5:s}: {2:6.2f} TS: {3:6.2f} Flux: {4:8.4g}'.format(
+        halo_modelname, p, p2,
+        gta.roi[halo_source_name]['ts'],
+        gta.roi[halo_source_name]['flux'],
+        injection_par2_name
+        )
+    )
+
+    halo_data = copy.deepcopy(gta.roi[halo_source_name].data)
+    gta.delete_source(halo_source_name, save_template=False)
+    return o, halo_data, outprefix, p_name
