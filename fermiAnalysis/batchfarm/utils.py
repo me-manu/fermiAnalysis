@@ -32,11 +32,10 @@ def save(object, filename, protocol = -1):
     ------
     protocol:        int, see Pickler documentation
     """
-    file = gzip.GzipFile(filename, 'wb')
-    pickle.dump(object, file, protocol)
-    file.close()
+    with gzip.GzipFile(filename, 'wb') as f:
+        pickle.dump(object, f, protocol)
 
-def load(filename):
+def load(filename, encoding='latin1'):
     """
     Loads a compressed object from disk
 
@@ -48,9 +47,14 @@ def load(filename):
     -------
     The loaded object.
     """
-    file = gzip.GzipFile(filename, 'rb')
-    object = pickle.load(file)
-    file.close()
+    with gzip.GzipFile(filename, 'rb') as f:
+        try:
+            object = pickle.load(f)
+        except UnicodeDecodeError:
+            if sys.version_info[0] > 2:
+                object = pickle.load(f, encoding=encoding)
+            else: 
+                raise
 
     return object
 
