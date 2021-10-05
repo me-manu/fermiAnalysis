@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from .utils import interp_2d_likelihood
 
 def plot_model(model_flux, **kwargs):
 
@@ -57,3 +58,25 @@ def plot_data(sed, **kwargs):
     plt.gca().set_xscale('log')
     plt.gca().set_yscale('log')
     plt.legend()
+
+def plot_2d_delta_likelihood(x, y, logl, cbar=True, fig=None, ax=None, log_x=True, log_y=True, intp_kwargs={}, **kwargs):
+    """Plot a 2d likelihood surface"""
+    cp = plt.cm.get_cmap(kwargs.pop('cmap', 'PuBuGn_r'))
+
+    if fig is None:
+        fig = plt.figure(figsize=(6,4))
+    if ax is None:
+        ax = fig.add_subplot(111)
+
+    xx, yy, ll = interp_2d_likelihood(x, y, logl, log_x=log_x, log_y=log_y, **intp_kwargs)
+
+    im = ax.pcolormesh(xx, yy, ll - ll.max(), cmap=cp, **kwargs)
+    if cbar:
+        plt.colorbar(im, label='$\Delta\ln\mathcal{L}$')
+
+    if log_x:
+        ax.set_xscale('log')
+    if log_y:
+        ax.set_yscale('log')
+
+    return fig, ax, im

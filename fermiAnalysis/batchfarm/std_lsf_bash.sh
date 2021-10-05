@@ -1,21 +1,18 @@
 #!/usr/bin/env bash
 
-#clean up after yourself
-
-echo "cleaning up" 1>&2
-rm -rf /scratch/$USER*
 wait
-sleep {0[sleep]:.2f}
 
-#set up the tmpdir
+# set up the tmpdir
 echo "setting up TMPDIR" 1>&2
 NFSDIR=$PWD
 TMPDIR="/scratch/$USER.$LSB_JOBID"
 mkdir -p $TMPDIR
+echo "ls /scratch/mmeyer.*" 1>&2
+ls -lrth /scratch 1>&2
 sleep {0[extrasleep]:.2f}
 wait
 
-#make sure that tmpdir was set up correctly
+# make sure that tmpdir was set up correctly
 i=0
 ls $TMPDIR 1>&2
 while [ $? -ne 0 -a $i -lt 10 ]; do 
@@ -54,7 +51,10 @@ sleep {0[sleep]:.2f}
 wait
 
 echo "checking TMPDIR before python call" 1>&2
-ls $TMPDIR 1>&2
+ls -lrth $TMPDIR 1>&2
+#if [ $? -ne 0 ]; then
+#    echo "TMPDIR does not exist! Exit" 1>&2
+#    return 42
 
 echo "some additional info:" 1>&2
 echo "HOST: $HOST" 1>&2
@@ -70,15 +70,17 @@ while [ $LSB_JOBINDEX -lt $MAX_JOB -a $LSB_JOBINDEX -le $LSB_JOBINDEX_END ]; do
 
 #    echo "calling python: $TMPDIR/{0[scriptfile]:s} -c $TMPDIR/{0[configfile]:s} {0[add_opt]:s} 1> $TMPDIR/out.$LSB_JOBINDEX 2> $TMPDIR/err.$LSB_JOBINDEX" 1>&2
 #    python $TMPDIR/{0[scriptfile]:s} -c $TMPDIR/{0[configfile]:s} {0[add_opt]:s} 1> $TMPDIR/out.$LSB_JOBINDEX 2> $TMPDIR/err.$LSB_JOBINDEX
-    echo "calling python: {0[script]:s} -c {0[config]:s} {0[add_opt]:s} 1> $TMPDIR/out.$LSB_JOBINDEX 2> $TMPDIR/err.$LSB_JOBINDEX" 1>&2
-    python {0[script]:s} -c {0[config]:s} {0[add_opt]:s} 1> $TMPDIR/out.$LSB_JOBINDEX 2> $TMPDIR/err.$LSB_JOBINDEX
+#    echo "calling python: {0[script]:s} -c {0[config]:s} {0[add_opt]:s} 1> $TMPDIR/out.$LSB_JOBINDEX 2> $TMPDIR/err.$LSB_JOBINDEX" 1>&2
+#    python {0[script]:s} -c {0[config]:s} {0[add_opt]:s} 1> $TMPDIR/out.$LSB_JOBINDEX 2> $TMPDIR/err.$LSB_JOBINDEX
+    echo "calling python: {0[script]:s} -c {0[config]:s} {0[add_opt]:s} 1> {0[logdir]:s}/out.$LSB_JOBINDEX 2> {0[logdir]:s}/err.$LSB_JOBINDEX" 1>&2
+    python {0[script]:s} -c {0[config]:s} {0[add_opt]:s} 1> {0[logdir]:s}/out.$LSB_JOBINDEX 2> {0[logdir]:s}/err.$LSB_JOBINDEX
 
     if [ $? -eq 0 ]; then
         echo "python OK" 1>&2
     else
         date 1>&2
         echo "$LSB_JOBNAME $LSB_JOBID . $LSB_JOBINDEX python failed" 1>&2
-        cat $TMPDIR/err.$LSB_JOBINDEX 1>&2
+#        cat $TMPDIR/err.$LSB_JOBINDEX 1>&2
         echo "checking TMPDIR after failed python call" 1>&2
         ls $TMPDIR 1>&2
         sleep {0[sleep]:.2f}
@@ -93,17 +95,18 @@ while [ $LSB_JOBINDEX -lt $MAX_JOB -a $LSB_JOBINDEX -le $LSB_JOBINDEX_END ]; do
         #wait
 
         #python $TMPDIR/{0[scriptfile]:s} -c $TMPDIR/{0[configfile]:s} {0[add_opt]:s} 1> $TMPDIR/out.$LSB_JOBINDEX 2> >(tee $TMPDIR/err.$LSB_JOBINDEX >&2)
-        python {0[script]:s} -c {0[config]:s} {0[add_opt]:s} 1> $TMPDIR/out.$LSB_JOBINDEX 2> >(tee $TMPDIR/err.$LSB_JOBINDEX >&2)
+        #python {0[script]:s} -c {0[config]:s} {0[add_opt]:s} 1> $TMPDIR/out.$LSB_JOBINDEX 2> >(tee $TMPDIR/err.$LSB_JOBINDEX >&2)
+        python {0[script]:s} -c {0[config]:s} {0[add_opt]:s} 1> {0[logdir]:s}/out.$LSB_JOBINDEX 2> {0[logdir]:s}/err.$LSB_JOBINDEX
     fi
     PYTHON_OK=$?
 
-    sleep {0[sleep]:.2f}
-    wait
-    cp $TMPDIR/out.$LSB_JOBINDEX {0[logdir]:s}
-    sleep {0[sleep]:.2f}
-    wait
-    cp $TMPDIR/err.$LSB_JOBINDEX {0[logdir]:s}
-    sleep {0[sleep]:.2f}
+#    sleep {0[sleep]:.2f}
+#    wait
+#    cp $TMPDIR/out.$LSB_JOBINDEX {0[logdir]:s}
+#    sleep {0[sleep]:.2f}
+#    wait
+#    cp $TMPDIR/err.$LSB_JOBINDEX {0[logdir]:s}
+#    sleep {0[sleep]:.2f}
     wait
 
     let "LSB_JOBINDEX++"
@@ -113,7 +116,12 @@ done
 wait
 sleep {0[sleep]:.2f}
 
+# clean up after yourself
+echo "cleaning up" 1>&2
 cd $NFSDIR
 rm -rf /scratch/$USER*
 sleep {0[sleep]:.2f}
 wait
+
+return 0
+

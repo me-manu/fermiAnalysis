@@ -236,15 +236,15 @@ def main():
         else:
             old_spec_pars = None
 
-        if args.state.find('ebl') >= 0:
-            gta = fa.utils.add_ebl_atten(gta,config['selection']['target'],fit_config['z'])
-            
         if args.forcepl and not \
             gta.roi.get_source_by_name(config['selection']['target'])['SpectrumType'] == 'PowerLaw':
 
-            gta = set_src_spec_pl(gta, gta.get_source_name(config['selection']['target']))
+            gta, _ = set_src_spec_pl(gta, gta.get_source_name(config['selection']['target']))
             args.state += "_pl"
 
+        if args.state.find('ebl') >= 0:
+            gta = fa.utils.add_ebl_atten(gta,config['selection']['target'],fit_config['z'])
+            
         gta = set_free_pars_avg(gta, fit_config, freezesupexp = args.freezesupexp)
         f,gta = fit_with_retries(gta, fit_config, config['selection']['target'], 
                                     alt_spec_pars = old_spec_pars)

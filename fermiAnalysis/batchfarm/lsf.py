@@ -7,6 +7,8 @@ Utility functions for sumbmission to an lsf cluster
 import shlex
 import logging
 import fermiAnalysis.batchfarm as bf
+import re
+import sys
 from fermiAnalysis.batchfarm.utils import mkdir
 from subprocess import call,check_call,Popen,PIPE,check_output,CalledProcessError
 from time import sleep
@@ -26,16 +28,17 @@ lsfDefaults = {
     'lsb_steps': 1,
     'concurrent': 0,
     'dependency': None,
-    'minimumJID':1,
-    'forceJob':'0',
-    'nolog':True,
-    'extraDelay':False,
-    'lsb_steps':1,
-    'logdir':'./log',
-    'tmpdir':'./tmp',
+    'minimumJID': 1,
+    'forceJob': '0',
+    'nolog': True,
+    'extraDelay': False,
+    'lsb_steps': 1,
+    'logdir': './log',
+    'tmpdir': './tmp',
     'max_rjobs': None,
-    'nminjob':None, 
-    'nmaxjob':None
+    'nminjob': None, 
+    'nmaxjob': None,
+    'no_resubmit_running_jobs': True
 }
 
 def setLsf(func):
@@ -60,16 +63,38 @@ def setLsf(func):
         return func(*args, **kwargs)
     return init
 
-def get_running_jobs():
-    #p = Popen(['bjobs', '-r'], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+def get_jobs(user="mmeyer"):
     p = Popen(['bjobs'], stdin=PIPE, stdout=PIPE, stderr=PIPE)
     try:
-        #out = check_output(('grep', 'RUN'), stdin=p.stdout)
-        out = check_output(('grep', 'mmeyer'), stdin=p.stdout)
+        out = check_output(("grep", user), stdin=p.stdout)
         return len(out.split('\n')) - 1
     except CalledProcessError:
         return 0
 
+def get_running_jobs_list(user="mmeyer"):
+    """retrun output list of running jobs with full name"""
+    p = Popen(['bjobs', '-w'], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    lines = p.stdout.readlines()
+    if sys.version_info[0] >= 3:
+        lines = [line.decode('utf-8') for line in lines]
+    return [line for line in lines if user in line]
+
+def remove_running_job_from_list(job_name, job_list, user="mmeyer"):
+    """Remove a job from a job if it is currently running"""
+    out = get_running_jobs_list(user=user)  # output of bjobs -r -w
+    # get the job name and array id for running jobs
+    x = [job.split()[6] for job in out if job_name in job] 
+    # from this array, get the array id which is a numeric value (w+) between brackets []
+    array_ids = [int(re.findall("\[\w+\]", t)[0].strip('[]')) for t in x]   
+    # remove the array_ids of the running jobs from the job list
+    # and return the new job list
+    for i in array_ids:
+        try:
+            job_list.remove(i)
+        except ValueError:  # job is not in list 
+            pass
+
+    return job_list
 
 
 def init_lsf(local_id = 0):
@@ -193,6 +218,8 @@ def submit_lsf(script,config,option,njobs,**kwargs):
         maximum jobs that are allowed to run. If exceeded, wait 20s and try again.
     tmpdir: string, local directory for temporary storage of bash script
     logdir: string, local directory for log files
+    no_resubmit_running_jobs: bool
+        if job array job is running, don't resubmit
     """
     mkdir(kwargs['logdir'])
     mkdir(kwargs['tmpdir'])
@@ -215,18 +242,25 @@ def submit_lsf(script,config,option,njobs,**kwargs):
     call(['chmod','u+x',bashScript])
 
     if kwargs['forceJob'] == '0':
-        if type(njobs) == int:
+        if kwargs['no_resubmit_running_jobs'] and (isinstance(njobs, list) or njobs == 1):
+            # check if jobs with same name are already running and remove them
+            njobs = remove_running_job_from_list(kwargs['jname'], njobs if isinstance(njobs, list) else [1])
+            if not len(njobs):
+                logging.warning("all jobs requested for submission are currently running / pending! Returning without submission")
+                return
+
+        if isinstance(njobs, int):
             if not kwargs['minimumJID']: kwargs['minimumJID'] = 1
             njobs = '[{0[minimumJID]:n}-{1:n}:{0[lsb_steps]:n}]'.format(kwargs,njobs)
             nsubmit = 1
-        elif type(njobs) == list:
+        elif isinstance(njobs, list):
             if len(njobs) > 100:
                 nsubmit = len(njobs) / 100 if len(njobs) % 100 == 0 else len(njobs) / 100 + 1
             else:
                 nsubmit = 1
     else:
         njobs = kwargs['forceJob']
-        nsubmit        = 1
+        nsubmit = 1
 
     nsubmit = int(nsubmit)
 
@@ -266,12 +300,12 @@ def submit_lsf(script,config,option,njobs,**kwargs):
         # and wait 
 
         if type(kwargs['max_rjobs']) == int:
-            rjobs = get_running_jobs()
+            rjobs = get_jobs()
             while rjobs >= kwargs['max_rjobs']:
                 logging.info('{0:n} jobs running, max number of running jobs allowed: {1:n}'.format(rjobs, kwargs['max_rjobs']))
                 logging.info('Sleep for {0:.2f} s ...'.format(kwargs['sleep'] * 3.))
                 sleep(kwargs['sleep'] * 3.)
-                rjobs = get_running_jobs()
+                rjobs = get_jobs()
 
 
         if not kwargs['dry']:

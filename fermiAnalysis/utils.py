@@ -14,6 +14,7 @@ import copy
 import string
 import shlex
 from fermiAnalysis import adaptivebinning as ab
+from scipy.interpolate import RectBivariateSpline
 
 def calculate_exposure(srcconf,earray):
     """
@@ -164,6 +165,10 @@ def fit_with_retries(gta, fit_config, target,
         gta.free_norm(target, free = True)
         gta.free_index(target, free = False)
         gta.free_index(target, free = True)
+        gta.print_params()
+        if 'fix_sources' in fit_config.keys():
+            for src, pars in fit_config['fix_sources'].items():
+                gta.free_source(src, pars=pars, free=False)
         logging.info("starting gta.fit")
         print_free_sources(gta)
         f = gta.fit(retries=fit_config.get('fermipy_retries', 3))
@@ -207,6 +212,7 @@ def fit_with_retries(gta, fit_config, target,
             logging.warning("optimize failed with {0}. Trying to continue anyway".format(e))
 
         print_free_sources(gta)
+        gta.print_params()
         f = gta.fit(retries=fit_config.get('fermipy_retries', 3))
         retries -= 1
         
@@ -230,6 +236,7 @@ def fit_with_retries(gta, fit_config, target,
         logging.warning('Now there are {0:n} free parameters'.format(nfree))
         f = gta.fit(retries = fit_config.get('fermipy_retries', 3))
 
+    gta.print_params()
     return f,gta
 
 def set_free_pars_avg(gta, fit_config, freezesupexp = False):
@@ -541,7 +548,7 @@ def set_src_spec_pl(gta, src, e0 = None, e0_free = False):
     logging.info('New source parameters are: {0}'.format(gta.roi.get_source_by_name(src).spectral_pars))
     return gta, "Index"
 
-def set_src_spec_plexpcut(gta, src, e0 = None, e0_free = False, index2_free=True, index2=1.):
+def set_src_spec_plexpcut(gta, src, e0=None, e0_free=False, index2_free=True, index2=1., ecut=None):
     """
     Set an arbitrary source spectrum to a power law
     with exponential cut off 
@@ -620,11 +627,13 @@ def set_src_spec_plexpcut(gta, src, e0 = None, e0_free = False, index2_free=True
                         max= e0 * 10., min= e0 / 10.,
                         name= 'Scale', scale= 1.0,
                         value= e0)
+    if ecut is None:
+        ecut = 2. * e0
     pars['Cutoff'] = dict(error= np.nan,
                         free= False,
-                        max= 1e+5, min= 1.0,
+                        max= max(ecut * 10., 1e+6), min= 1.0,
                         name= 'Cutoff', scale= 1.0,
-                        value= e0 * 2.)
+                        value= ecut)
     pars['Index2'] =  dict(error= np.nan, 
                             free = index2_free, 
                             max= 2.0, min= 0.0, 
@@ -1160,4 +1169,50 @@ def run_unbinned_pipeline(gta, model, overwrite=False, refit=False):
     # run gtlike
     result = run_gtlike_unbinned(gta, model, refit=refit)
     return result
+
+def interp_2d_likelihood(x, y, logl, x_steps=100, y_steps=101, log_x=True, log_y=True, **kwargs):
+    """
+    Interpolate a 2d likelihood surface using a bivariate spline
+
+    Parameters
+    ----------
+    x: array-like
+        x values, n-dim
+    y: array-like
+        y values, m-dim
+    logl: array-like
+        2d likelihood surface, n x m-dim 
+    
+    Returns
+    -------
+    Tuple with new x, y grids and interpolated logl values
+    """
+    kwargs.setdefault('kx', 2)
+    kwargs.setdefault('ky', 2)
+    kwargs.setdefault('s', 0.)
+
+    if log_x:
+        x_intp = np.log10(x)
+    else:
+        x_intp = x
+
+    if log_y:
+        y_intp = np.log10(y)
+    else:
+        y_intp = y
+
+    x_new = np.linspace(x_intp.min(), x_intp.max(), x_steps)
+    y_new = np.linspace(y_intp.min(), y_intp.max(), y_steps)
+
+    xx, yy = np.meshgrid(x_new, y_new, indexing='ij')
+    spl = RectBivariateSpline(x_intp, y_intp, logl, **kwargs) 
+
+    logl_intp = spl(x_new, y_new)
+
+    if log_x:
+        xx = 10.**xx
+    if log_y:
+        yy = 10.**yy
+
+    return xx, yy, logl_intp
 

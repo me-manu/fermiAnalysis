@@ -1,16 +1,7 @@
-#from fermipy.skymap import Map
-try:
-    from fermipy.utils import init_matplotlib_backend
-    init_matplotlib_backend()
-except:
-    pass
+from fermipy.utils import init_matplotlib_backend
 import argparse
 import os
-from glob import glob
-from astropy.coordinates import SkyCoord
-import astropy.units as u
 from fermiAnalysis import setup
-from fermiAnalysis.batchfarm import utils,lsf
 from fermiAnalysis.ext_funcs import fit_igmf_halo_scan
 
 def main():
@@ -20,6 +11,7 @@ def main():
     parser.add_argument('-c', '--conf', required=True)
     parser.add_argument('--halo-template-dir', required=True, help='Directory with halo template fits files')
     parser.add_argument('--halo-template-suffix', required=True, help='suffix for halo template fits fits')
+    parser.add_argument('--file-suffix', help='additional suffix for output files', default='')
     parser.add_argument('--state', default = ['avgspec'],
                         choices = ['avgspec','avgspec_ebl'],
                         help='Analysis state')
@@ -39,8 +31,8 @@ def main():
     gta.logger.info('reloading {0:s}'.format(args.state))
     gta.load_roi(args.state) # reload the average spectral fit
 
-    modelname = "{0:s}_{1:s}".format(args.state,
-                                     '_'.join([k for k in args.halo_template_dir.split('/')[-4:] if not 'spec' in k]))
+    modelname = "{0:s}_{1:s}{2:s}".format(args.state,
+                                     '_'.join([k for k in args.halo_template_dir.split('/')[-4:] if not 'spec' in k]), args.file_suffix)
 
     gta.logger.info("Using modelname: {0:s}".format(modelname))
     # change the outdir
@@ -51,9 +43,11 @@ def main():
         os.makedirs(gta.outdir)
     gta.logger.info("Set new outdir: {0:s}".format(gta.outdir))
 
+    gta.logger.info("reloaded ROI had log likelihood value: {0:.2f}".format(-gta.like()))
     halo_profile_tied = fit_igmf_halo_scan(gta, modelname,
                                            config['selection']['target'],
                                            args.halo_template_dir,
+                                           model_idx=job_id,
                                            halo_template_suffix=args.halo_template_suffix,
                                            injection_spectrum='PLSuperExpCutoff',
                                            injection_par2_name='Cutoff',
@@ -63,7 +57,7 @@ def main():
                                            free_bkgs=True,
                                            generate_maps=args.generate_maps,
                                            generate_seds=args.generate_seds,
-                                           distance_free_norm=5.,
+                                           distance_free_norm=3.,  # at 1e-14 G, above 2. deg about 10% of cascade photons are beyond 2 deg at 1GeV
                                            z=fit_config['z'], 
                                            ebl_model_name='dominguez',
                                            optimizer='MINUIT')

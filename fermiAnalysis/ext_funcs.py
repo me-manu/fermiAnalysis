@@ -82,6 +82,7 @@ def fit_region(gta, modelname, src_name, loge_bounds=None,
                create_maps=True,
                create_sed=True,
                free_radius_sed=1.0,
+               free_shape_target=False, 
                crate_ts_maps=True,
                distance_free_norm=1.5,
                distance_free_shape=1.0,
@@ -183,8 +184,11 @@ def fit_region(gta, modelname, src_name, loge_bounds=None,
     # free shape parameters within 1 deg except for diff sources
     gta.free_sources(skydir=skydir, distance=distance_free_shape, pars='shape', exclude=diff_sources)
 
-    # free central source
-    gta.free_source(src_name)
+    # free central source norm
+    gta.free_source(src_name, pars='norm')
+    # free central source spectral shape
+    if free_shape_target:
+        gta.free_source(src_name, pars='shape')
     gta.fit()
     gta.update_source(src_name,reoptimize=True)
     gta.write_roi(modelname + '_roi', make_plots=True)
@@ -468,58 +472,45 @@ def plot_lnlscan(ext, **kwargs):
     return ax, im
 
 def rebin_ebin_logl(ext_old, rebin=2):
-# TODO rebin > 2 not working, loglike and e bins need to be calculated differently
+# TODO this is not fully working
+# TODO need to check and do better
 
     ext = copy.deepcopy(ext_old)
     ext['ebin_e_min'] = ext['ebin_e_min'][::rebin]  
     ext['ebin_e_max'] = ext['ebin_e_max'][rebin-1::rebin] 
 
-    if rebin < 3:
-        ext['ebin_loglike'] = ext['ebin_loglike'][1::rebin,:] + ext['ebin_loglike'][::rebin,:]
-    else:
-        ebin_loglike = np.zeros((ext['ebin_loglike'].shape[0] / rebin, ext['ebin_loglike'].shape[1]))
-        for i in range(ebin_loglike.shape[0]):
-            ebin_loglike[i] = np.sum(ext['ebin_loglike'][i * rebin : (i + 1) * rebin], axis=0)
-        ext['ebin_loglike'] = ebin_loglike
+    if not ext['ebin_e_max'].size == ext['ebin_e_min'].size:
+        ext['ebin_e_max'][-1] = ext_old['ebin_e_max'][-1]
+        ext['ebin_e_min']= ext['ebin_e_min'][:-1]
+
+    n_ebins_new = ext['ebin_e_max'].size
     ext['ebin_e_ctr'] = np.sqrt(ext['ebin_e_min'] * ext['ebin_e_max'])    
+
+    ebin_loglike = np.zeros((n_ebins_new, ext['ebin_loglike'].shape[1]))
+    for i, emin in enumerate(ext['ebin_e_min']):
+        m = (ext_old['ebin_e_ctr'] >= emin) & (ext_old['ebin_e_ctr'] < ext['ebin_e_max'][i])
+        ebin_loglike[i] = np.sum(ext['ebin_loglike'][m], axis=0)
+    ext['ebin_loglike'] = ebin_loglike
     ext['ebin_ts_ext'] = -2. * (ext['ebin_loglike'][:,0] - ext['ebin_loglike'].max(axis=1))       
-    ext['ebin_ext'] = ext['width'][np.argmax(ext['ebin_loglike'], axis=1)]
     dloglike = (ext['ebin_loglike'].T - ext['ebin_loglike'].max(axis=1)).T
 
     # recalculate errors for each energy bin
-    m = ext['width'] > 0.
-    wmin, wmax = ext['width'][m].min(), ext['width'][m].max()
-    widthM = np.arange(np.log10(wmin), np.log10(wmax), 0.01)
-    ext['ebin_ext_err'] = np.zeros(ext['ebin_ext'].size)
-    ext['ebin_ext_err_hi'] = np.zeros(ext['ebin_ext'].size)
-    ext['ebin_ext_err_lo'] = np.zeros(ext['ebin_ext'].size)
-    ext['ebin_ext_ul95'] = np.zeros(ext['ebin_ext'].size)
-    for i in range(len(ext['ebin_e_ctr'])):
+    ext['ebin_ext_err'] = np.zeros(n_ebins_new)
+    ext['ebin_ext_err_hi'] = np.zeros(n_ebins_new)
+    ext['ebin_ext_err_lo'] = np.zeros(n_ebins_new)
+    ext['ebin_ext_ul95'] = np.zeros(n_ebins_new)
+    ext['ebin_ext'] = np.zeros(n_ebins_new)
 
-        for j, sl in enumerate([slice(1, np.argmax(dloglike[i])), slice(np.argmax(dloglike[i]),dloglike[i].size)]):
+    for i in range(n_ebins_new):
 
-            if not j:
-                widthM = np.arange(np.log10(wmin), np.log10(ext['width'][m][np.argmax(dloglike[i])]), 0.01)
-            else:
-                widthM = np.arange(np.log10(ext['width'][np.argmax(dloglike[i])]), np.log10(wmax), 0.01)
+        o = get_parameter_limits(ext['width'], ebin_loglike[i])
+        ext['ebin_ext'][i] = o['x0']
+        ext['ebin_ext_err_hi'][i] = o['err_hi']
+        ext['ebin_ext_err_lo'][i] = o['err_lo']
+        ext['ebin_ext_err'][i] = o['err']
+        ext['ebin_ext_ul95'][i] = o['ul']
 
-            try:
-                fn = USpline(np.log10(ext['width'][sl]), dloglike[i][sl], ext='extrapolate', s=0, k=2)
-                logli = fn(widthM)
-            except:
-                logli = np.interp(np.log10(widthM), ext['width'][sl], dloglike[i][sl])
-
-            if not j:
-                ext['ebin_ext_err_lo'][i] = ext['ebin_ext'][i] - 10.**widthM[np.argmin(np.abs(logli + 1. / 2.))]
-            else:
-                ext['ebin_ext_err_hi'][i] = 10.**widthM[np.argmin(np.abs(logli + 1. / 2.))] - ext['ebin_ext'][i]
-                ext['ebin_ext_ul95'][i] = 10.**widthM[np.argmin(np.abs(logli + 2.71 / 2.))]
-            #if j and i:
-                #1. / 0.
-    ext['ebin_ext_err'] = 0.5 * (ext['ebin_ext_err_hi'] + ext['ebin_ext_err_lo'])
     return ext
-
-
 
 def plot_ext_ebin_logl(ext, ts_thr=4., fig=None, ax=None, plot_lnl=True, lnl_kwargs={}):
     from fermipy.utils import init_matplotlib_backend
@@ -531,14 +522,16 @@ def plot_ext_ebin_logl(ext, ts_thr=4., fig=None, ax=None, plot_lnl=True, lnl_kwa
     if fig is None:
         fig = plt.figure()
 
+    if ax is None:
+        ax = plt.gca()
+
+    ax.set_ylabel('Extension $R_{68}$ (deg)')
+
     ectr = ext['ebin_e_ctr']
     delo = ext['ebin_e_ctr'] - ext['ebin_e_min']
     dehi = ext['ebin_e_max'] - ext['ebin_e_ctr']
     xerr0 = np.vstack((delo[m], dehi[m]))
     xerr1 = np.vstack((delo[~m], dehi[~m]))
-
-    if ax is None:
-        ax = plt.gca()
 
     ax.errorbar(ectr[m], ext['ebin_ext'][m], xerr=xerr0,
                 yerr=(ext['ebin_ext_err_lo'][m],
@@ -552,10 +545,9 @@ def plot_ext_ebin_logl(ext, ts_thr=4., fig=None, ax=None, plot_lnl=True, lnl_kwa
                 uplims=True,
                 color='k',
                 linestyle='None', marker='o')
-    ax.set_xlabel('Energy [log$_{10}$(E/MeV)]')
-    ax.set_ylabel('Extension [deg]')
+    ax.set_xlabel('Energy (MeV)')
 
-    ymin = min(10**-1.5, 0.8 * ext['ext_ul95'])
+    ymin = min(10**-2., 0.8 * ext['ext_ul95'])
     ymax = max(10**-0.5, 1.2 * ext['ext_ul95'])
     if np.any(np.isfinite(ext['ebin_ext_ul95'])):
         ymin = min(ymin, 0.8 * np.nanmin(ext['ebin_ext_ul95']))
@@ -1359,12 +1351,6 @@ def profile_halo_src_norms(gta, src_name, halo_source_name,
     gta.logger.info("Performing 2D profile")
     gta.logger.info("norm steps: {0}".format(norm))
     
-    m = (norm >= s.spectral_pars['Prefactor']['min']) & \
-        (norm <= s.spectral_pars['Prefactor']['max']) 
-    if not m.sum():
-        raise ValueError("No Prefactor scan points!")
-    norm= norm[m]
-
     output = {'norm_halo': []}
 
     try:
@@ -1374,6 +1360,13 @@ def profile_halo_src_norms(gta, src_name, halo_source_name,
     except RuntimeError:
         gta.logger.warning(
             "Caught failure on setBounds for %s::%s." % (name, src_norm_name))
+
+        m = (norm >= s.spectral_pars['Prefactor']['min']) & \
+            (norm <= s.spectral_pars['Prefactor']['max']) 
+        if not m.sum():
+            raise ValueError("No Prefactor scan points!")
+        norm = np.logspace(np.log10(norm[m].min()), np.log10(norm[m].max()), xsteps)
+
 
     for k in ['flux_src', 'eflux_src', 'dnde_src', 'npred_src']:
         output[k] = np.zeros_like(norm)
@@ -1395,7 +1388,7 @@ def profile_halo_src_norms(gta, src_name, halo_source_name,
             gta.like.freeze(idx_norm)
         except RuntimeError:
             logging.warning(
-                "Caught failure on set for %s::%s: %.2f" % (name, parName, x))
+                "Caught failure on set for %s::%s: %.2e" % (name, src_norm_name, x))
 
         # compute the new norm values for the halo
         max_halo_norm = set_halo_normalization(gta, src_name, halo_source_name,
@@ -1488,6 +1481,14 @@ def plot_2dprofile_scan(output, gta=None, fig=None, ax=None, ykey='dloglike', xk
     if ykey == 'loglike':
         m = np.isfinite(logl_matrix)
         logl_matrix[m] -= logl_matrix[m].max()
+        if vmin is None:
+            vmin = logl_matrix[m].min()
+        else:
+            vmin -= logl_matrix[m].max()
+        if vmax is None:
+            vmax = logl_matrix[m].max()
+        else:
+            vmax -= logl_matrix[m].max()
         print (logl_matrix[m].min(), logl_matrix[m].max(), vmin if vmin is not None else output[ykey].min())
         print (logl_matrix[m].min(), logl_matrix[m].max(), vmax if vmax is not None else output[ykey].max())
 
@@ -1562,8 +1563,31 @@ def set_halo_normalization(gta, src_name, halo_source_name,
                      update_source=False)            
     return new_norm
 
-def build_halo_profile_table(halo_profile_tied, index_par_name='Index', injection_par2_name='Cutoff'):
+def build_halo_profile_table(halo_profile_tied, index_par_name='Index', injection_par2_name='Cutoff', xsteps=30, prepend=True):
     """Build a fits table for the logl profile results for the IGMF halo fit"""
+
+    # check if xsteps steps for norm scan where used - could be less due to line 1358
+    # if that's the case, pad the arrays with additional values
+    # step through the list which corresponds to tested templates
+#    for i in range(len(halo_profile_tied)):
+#        norm_steps = halo_profile_tied[i]['norm_src'].size
+#        if not norm_steps == xsteps:
+#            logging.warning("for i={2:n}: did not find {1:n} scan steps for source norm nut {0:n}, padding arrays".format(
+#                                norm_steps, xsteps, i))
+#            x_diff = np.diff(np.log10(halo_profile_tied[i]['norm_src']))
+#
+#
+#            if prepend:  # at new norm values to the left
+#                t = np.array([halo_profile_tied[i]['norm_src'][0] / 10.**(j * x_diff[0]) for j in range(1, xsteps - norm_steps + 1)])
+#                halo_profile_tied[i]['norm_src'] = np.concatenate((t[::-1], halo_profile_tied[i]['norm_src']))
+#            else:
+#                t = np.array([halo_profile_tied[i]['norm_src'][-1] * 10.**(j * x_diff[0]) for j in range(1, xsteps - norm_steps + 1)])
+#                halo_profile_tied[i]['norm_src'] = np.concatenate((halo_profile_tied[i]['norm_src'], t))
+#            assert halo_profile_tied[i]['norm_src'].size == xsteps
+# TODO
+# better to pad everything with nan's and use nanmin and nanmax for profiling later....
+# or remove offending line 1358?
+            
     cols = OrderedDict()
     # add B field parameters
     cols = OrderedDict({k: [d['Bfield'][k] for d in halo_profile_tied] for k in ['B', 'maxTurbScale']})
@@ -1601,6 +1625,7 @@ def build_halo_profile_table(halo_profile_tied, index_par_name='Index', injectio
 def fit_igmf_halo_scan(gta, modelname,
                        src_name,
                        halo_template_dir,
+                       model_idx=None,
                        halo_template_suffix='',
                        injection_spectrum='PLSuperExpCutoff',
                        injection_par2_name='Cutoff',
@@ -1643,6 +1668,9 @@ def fit_igmf_halo_scan(gta, modelname,
         path to directory with the halo templates for each tested injection spectrum
 
     {options}
+    model_idx: int or None
+        if None, run loop over all templates, otherwise, run only for model with that index - 1
+
 
     halo_template_suffix: str
         an additional file suffix for the halo template.
@@ -1697,6 +1725,12 @@ def fit_igmf_halo_scan(gta, modelname,
     #TODO save and restore fit
 
     gta.logger.info('Starting IGMF Halo Scan %s'%(modelname))
+    lnl0 = -gta.like()    
+    gta.print_params()
+
+    #gta.fit()
+    #lnl1 = -gta.like()
+    #gta.print_params()
 
     if optimizer is None:
         optimizer = gta.config['optimizer']['optimizer']
@@ -1728,15 +1762,30 @@ def fit_igmf_halo_scan(gta, modelname,
             gta, index_par_name = set_src_spec_pl(gta, gta.get_source_name(src_name), 
                                                   e0=None,
                                                   e0_free=False)
-        elif injection_spectrum == 'PLSuperExpCutoff' or injection_sprectrum == 'PLExpCutoff':
-            gta, index_par_name = set_src_spec_plexpcut(gta, gta.get_source_name(src_name),
-                                                        e0=None,
-                                                        e0_free=False,
-                                                        index2=1.,
-                                                        index2_free=False)
+        elif injection_spectrum == 'PLSuperExpCutoff':
+            pars = {'Prefactor': gta.get_src_model(src_name)['spectral_pars']['Prefactor'], 
+                    'Index1': gta.get_src_model(src_name)['spectral_pars']['Index'], 
+                    'Scale': gta.get_src_model(src_name)['spectral_pars']['Scale'], 
+                    'Cutoff': {'free': False, 'scale': 1.0, 'name': 'Cutoff', 'min': 1.0, 'max': 1e8, 'error': np.nan, 'value': 1e7},
+                    'Index2': {'free': False, 'scale': 1.0, 'name': 'Index2', 'min': 0.1, 'max': 1., 'error': np.nan, 'value': 1.}
+            }
+            gta.set_source_spectrum(src_name, spectrum_type='PLSuperExpCutoff', spectrum_pars=pars)
+            index_par_name='Index1'
+
+        #elif injection_spectrum == 'PLSuperExpCutoff':
+            #gta, index_par_name = set_src_spec_plexpcut(gta, gta.get_source_name(src_name),
+                                                        #e0=None,
+                                                        #e0_free=False,
+                                                        #ecut=1e7,  # set to 10 TeV
+                                                        #index2=1.,
+                                                        #index2_free=False)
         else:
             raise ValueError("Injection spectrum {0:s} not supported".format(injection_sprectrum))
         src = gta.roi.get_source_by_name(src_name)
+
+    #gta.fit()
+    #lnl2 = -gta.like()
+    #gta.print_params()
 
     if not z is None and not 'Ebl' in src['SpectrumType']:
         gta = add_ebl_atten(gta, src_name, z, eblmodel=ebl_model_name)
@@ -1752,13 +1801,23 @@ def fit_igmf_halo_scan(gta, modelname,
     diff_sources = [s.name for s in gta.roi.sources if s.diffuse]
     
     gta.free_sources(False)
-    gta.free_sources(False, pars=fa.allidx)
+    gta.free_sources(False, pars=fa.allnorm + fa.allidx)
     gta.free_sources(skydir=skydir,
                      distance=distance_free_norm,
                      pars=fa.allnorm,
                      exclude=None if free_bkgs else diff_sources)
+
+    # test for 1RXSJ1958
+    # free spectral index of nearby sources
+    gta.free_sources(skydir=skydir,
+                     distance=1.,
+                     pars=['Index', 'Index1', 'alpha'],
+                     exclude=diff_sources)
+    gta.free_source(gta.get_source_name(src_name), pars=['Index', 'Index1', 'alpha'], free=False)
+
     # leave index of central source free for first fit
-    gta.free_source(gta.get_source_name(src_name), pars=["Index"])
+    #gta.free_source(gta.get_source_name(src_name), pars=[index_par_name, injection_par2_name])
+    #gta.free_source(gta.get_source_name(src_name), pars=[index_par_name])
 
     fit_result_base = gta.fit(optimizer=optimizer)
 
@@ -1786,6 +1845,16 @@ def fit_igmf_halo_scan(gta, modelname,
 
     filenames = os.path.join(halo_template_dir, halo_template_suffix + "*.fits")
     files = glob.glob(filenames)
+    # sort twice for index and Ecut
+    files = sorted(files,
+                   key=lambda f: float(
+                       os.path.basename(f).split("_")[os.path.basename(f).split("_").index("index") + 1].split(".fits")[0].replace("p","."))
+                   )
+    files = sorted(files,
+                   key=lambda f: float(
+                       os.path.basename(f).split("_")[os.path.basename(f).split("_").index("Ecut") + 1].split(".fits")[0].replace("p","."))
+                   )
+
     gta.logger.info("Found {0:n} template files in {1:s}".format(len(files), filenames))
 
     if not len(files):
@@ -1793,6 +1862,10 @@ def fit_igmf_halo_scan(gta, modelname,
 
     # loop over halo template files
     for i, f in enumerate(files):
+
+        if model_idx is not None:
+            if not i == model_idx - 1:
+                continue
 
         # get the used spectral parameters
         template = fits.open(f)
@@ -1822,7 +1895,6 @@ def fit_igmf_halo_scan(gta, modelname,
 
         gta.logger.info('Fitting central source in Halo with index {0:.3f} and {1:s} {2:.3f}'.format(p, injection_par2_name, p2))
         
-        model_idx = i
         outprefix = "{0:s}".format(halo_template_suffix)
 
         halo_source_dict['Spatial_Filename'] = os.path.join(f)
@@ -1838,9 +1910,17 @@ def fit_igmf_halo_scan(gta, modelname,
         gta.set_parameter(src_name, index_par_name,-1. * p,
                           update_source=False)
 
+        gta.fit()
+        loglike_no_halo = -gta.like()
+
         # add the halo
         try:
             gta.add_source(halo_source_name, halo_source_dict, free=False)
+            # set the lower bound to a low value
+            idx_halo = gta.like.par_index(halo_source_name, "Prefactor")
+            bounds = gta.like.model[idx_halo].getBounds()
+            gta.like.model[idx_halo].setBounds(min(bounds[0], 1e-5), bounds[1])
+
         except RuntimeError as e:
             gta.logger.error("Couldn't add halo source")
             gta.logger.error("Error was {0}".format(e))
@@ -1862,9 +1942,13 @@ def fit_igmf_halo_scan(gta, modelname,
 
         # perform the fit
         # treating the halo and source spectral normalizations as independent parameters
-        fit_result = gta.fit(optimizer=optimizer)
+
+        # this can fail in rare cases:
+        #fit_result = gta.fit(optimizer=optimizer)
+
         # TODO: check if fit should be performed like this:
-        #gta.fit(update=False, optimizer=optimizer)
+        # should be ok, only source dict is not updated...
+        fit_result = gta.fit(update=False, optimizer=optimizer)
         gta.print_params(loglevel=logging.INFO)
         gta.print_model(loglevel=logging.INFO)
         #gta.update_source(halo_source_name,reoptimize=True,
@@ -1885,27 +1969,6 @@ def fit_igmf_halo_scan(gta, modelname,
             gta.residmap(halo_modelname, model=model3,
                          #loge_bounds=loge_bounds,
                          make_plots=True)
-
-        # perform 2D likelihood fit over source and halo norm
-        o = profile_halo_src_norms(gta, src_name, halo_source_name,
-                                   scale0, prefactor0,
-                                   index=p, 
-                                   src_norm_name=injection_norm_name,
-                                   halo_norm_name='Prefactor',
-                                   src_scale_name=injection_scale_name,
-                                   reoptimize=True,
-                                   savestate=True,
-                                   sigma=3.,
-                                   xsteps=30,
-                                   ysteps=31)
-
-        spectral_parameters.update({'Spatial_Filename': f})
-        o.update(spectral_parameters)
-        o.update(sim_parameters)
-        halo_profile_tied += [o]
-        
-        # make sure to reload fit
-        gta.load_xml(halo_modelname)
 
         # compute the SEDs 
         if generate_seds:
@@ -1944,17 +2007,45 @@ def fit_igmf_halo_scan(gta, modelname,
         halo_fit_results += [fit_result]
         halo_data += [copy.deepcopy(gta.roi[halo_source_name].data)]
 
+        # perform 2D likelihood fit over source and halo norm
+        o = profile_halo_src_norms(gta, src_name, halo_source_name,
+                                   scale0, prefactor0,
+                                   index=p, 
+                                   src_norm_name=injection_norm_name,
+                                   halo_norm_name='Prefactor',
+                                   src_scale_name=injection_scale_name,
+                                   reoptimize=True,
+                                   savestate=True,
+                                   sigma=3.,
+                                   xsteps=30,
+                                   ysteps=31)
+
+        spectral_parameters.update({'Spatial_Filename': f})
+        o['loglike_no_halo'] = loglike_no_halo
+        o.update(spectral_parameters)
+        o.update(sim_parameters)
+        halo_profile_tied += [o]
+        
+        np.save(os.path.join(gta.workdir, '{0:s}_data.npy_{1:05n}'.format(outprefix, i + 1)), copy.deepcopy(gta.roi[halo_source_name].data))
+        np.save(os.path.join(gta.workdir, '{0:s}_fit_results_{1:05n}.npy'.format(outprefix, i + 1)), fit_result)
+        np.save(os.path.join(gta.workdir, '{0:s}_profile_tied_{1:05n}.npy'.format(outprefix, i + 1)), o)
+
         gta.delete_source(halo_source_name, save_template=False) 
 
-    np.save(os.path.join(gta.workdir, '{0:s}_data.npy'.format(outprefix)), halo_data)
-    np.save(os.path.join(gta.workdir, '{0:s}_fit_results.npy'.format(outprefix)), halo_fit_results)
-    np.save(os.path.join(gta.workdir, '{0:s}_profile_tied.npy'.format(outprefix)), halo_profile_tied)
+    # merge all results and put in one file:
+    if model_idx is None:
+        np.save(os.path.join(gta.workdir, '{0:s}_data.npy'.format(outprefix)), halo_data)
+        np.save(os.path.join(gta.workdir, '{0:s}_fit_results.npy'.format(outprefix)), halo_fit_results)
+        np.save(os.path.join(gta.workdir, '{0:s}_profile_tied.npy'.format(outprefix)), halo_profile_tied)
 
-    # build a fits table from halo_profile_tied
-    t = build_halo_profile_table(halo_profile_tied,
-                                 index_par_name=p_name,
-                                 injection_par2_name=injection_par2_name)
-    t.write(os.path.join(gta.workdir, '{0:s}_profiles.fits'.format(outprefix)), overwrite=True)
+        # build a fits table from halo_profile_tied
+        t = build_halo_profile_table(halo_profile_tied,
+                                     index_par_name=p_name,
+                                     injection_par2_name=injection_par2_name)
+        t.write(os.path.join(gta.workdir, '{0:s}_profiles.fits'.format(outprefix)), overwrite=True)
 
-    gta.logger.info('Finished IGMF Halo Scan {0:s}'.format(modelname))
+        gta.logger.info('Finished IGMF Halo Scan {0:s}'.format(modelname))
+
+    else:
+        gta.logger.info('Finished IGMF Halo Scan {0:s} for model id {1:n}'.format(modelname, model_idx))
     return halo_profile_tied

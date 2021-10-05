@@ -55,6 +55,7 @@ def main():
 
     free_radius_sed = fit_config.get('extension', dict(free_radius_sed=1.)).pop('free_radius_sed', 1.)
     force_ps = fit_config.get('extension', dict(force_ps=False)).pop('force_ps', False)
+    free_shape_target = fit_config.get('extension', dict(free_shape_target=False)).pop('free_shape_target', False)
     distance_free_norm = fit_config.get('extension', dict(distance_free_norm=1.5)).pop('distance_free_norm', 1.5)
     distance_free_shape = fit_config.get('extension', dict(distance_free_shape=1.)).pop('distance_free_shape', 1.)
     halo_fit = fit_config.get('extension', dict(halo_fit=False)).pop('halo_fit', False)
@@ -73,6 +74,7 @@ def main():
                free_radius_sed=free_radius_sed,
                distance_free_norm=distance_free_norm,
                distance_free_shape=distance_free_shape,
+               free_shape_target=free_shape_target,
                **fit_config.get('extension', {})
                )
 
