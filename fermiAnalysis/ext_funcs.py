@@ -1807,14 +1807,6 @@ def fit_igmf_halo_scan(gta, modelname,
                      pars=fa.allnorm,
                      exclude=None if free_bkgs else diff_sources)
 
-    # test for 1RXSJ1958
-    # free spectral index of nearby sources
-    gta.free_sources(skydir=skydir,
-                     distance=1.,
-                     pars=['Index', 'Index1', 'alpha'],
-                     exclude=diff_sources)
-    gta.free_source(gta.get_source_name(src_name), pars=['Index', 'Index1', 'alpha'], free=False)
-
     # leave index of central source free for first fit
     #gta.free_source(gta.get_source_name(src_name), pars=[index_par_name, injection_par2_name])
     #gta.free_source(gta.get_source_name(src_name), pars=[index_par_name])
@@ -2025,6 +2017,11 @@ def fit_igmf_halo_scan(gta, modelname,
         o.update(spectral_parameters)
         o.update(sim_parameters)
         halo_profile_tied += [o]
+
+        logging.info("loglike without halo: {0:.2f}".format(o['loglike_no_halo']))
+        logging.info("loglike0: {0:.2f}".format(o['loglike0']))
+        logging.info("max (loglike - loglike0): {0:.2f}".format(np.max(o['loglike'] - o['loglike0'])))
+        logging.info("max (loglike[:,-1] - loglike0): {0:.2f}".format(np.max(o['loglike'][:,-1] - o['loglike0'])))
         
         np.save(os.path.join(gta.workdir, '{0:s}_data.npy_{1:05n}'.format(outprefix, i + 1)), copy.deepcopy(gta.roi[halo_source_name].data))
         np.save(os.path.join(gta.workdir, '{0:s}_fit_results_{1:05n}.npy'.format(outprefix, i + 1)), fit_result)
