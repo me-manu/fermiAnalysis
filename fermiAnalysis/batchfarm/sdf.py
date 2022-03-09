@@ -74,23 +74,25 @@ def get_jobs(user="mmeyer"):
     except CalledProcessError:
         return 0
 
-def get_running_jobs_list(user="shared"):
+def get_running_jobs_list(user="mmeyer"):
     """retrun output list of running jobs with full name"""
-    p = Popen(['sacct', '--format=--format=JobID%20,JobName%100,Account%30'], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    command = "squeue -u {0:s} -r --Format JobArrayID,NAME:100".format(user)
+    p = Popen(shlex.split(command), stdin=PIPE, stdout=PIPE, stderr=PIPE)
     lines = p.stdout.readlines()
     if sys.version_info[0] >= 3:
         lines = [line.decode('utf-8') for line in lines]
-    return [line for line in lines if user in line]
+    return lines
 
-def remove_running_job_from_list(job_name, job_list, user="shared"):
+def remove_running_job_from_list(job_name, job_list, user="mmeyer"):
     """Remove a job from a job if it is currently running"""
     out = get_running_jobs_list(user=user) 
 
-    # get the job name and array id for running jobs
-    x = [job.split()[6] for job in out if job_name in job] 
+    # get the job id and array id
+    x = [job.split()[0] for job in out if job_name in job] 
 
-    # from this array, get the array id which is a numeric value (w+) between brackets []
-    array_ids = [int(re.findall("\[\w+\]", t)[0].strip('[]')) for t in x]   
+    # from this array id, which is separated from job id by underscore
+    array_ids = [int(j.split("_")[1]) for j in x]
+
     # remove the array_ids of the running jobs from the job list
     # and return the new job list
     for i in array_ids:
@@ -245,14 +247,12 @@ def submit_sdf(script, config, option, njobs, **kwargs):
     call(['chmod','u+x',bashScript])
 
     if kwargs['forceJob'] == '0':
-        if kwargs['no_resubmit_running_jobs'] and (isinstance(njobs, list) or njobs == 1):
+        if kwargs['no_resubmit_running_jobs'] and (isinstance(njobs, list) or isinstance(njobs, int)):
             # check if jobs with same name are already running and remove them
-            # TODO needs to be checked for SDF
-            #njobs = remove_running_job_from_list(kwargs['jname'], njobs if isinstance(njobs, list) else [1])
-            #if not len(njobs):
-            #    logging.warning("all jobs requested for submission are currently running / pending! Returning without submission")
-            #    return
-            pass
+            njobs = remove_running_job_from_list(kwargs['jname'], njobs if isinstance(njobs, list) else list(range(1,njobs + 1,1)))
+            if not len(njobs):
+                logging.warning("all jobs requested for submission are currently running / pending! Returning without submission")
+                return
 
         if isinstance(njobs, int):
             if not kwargs['minimumJID']: kwargs['minimumJID'] = 1
@@ -313,6 +313,9 @@ def submit_sdf(script, config, option, njobs, **kwargs):
 
         if "partition" in kwargs.keys():
             command += """-p {0[partition]:s} """.format(kwargs)
+
+        if "mem" in kwargs.keys():
+            command += """--mem {0[mem]:n} """.format(kwargs)
 
         command += """ {0:s} """.format(bashScript)
 
