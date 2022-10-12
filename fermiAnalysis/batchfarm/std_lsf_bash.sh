@@ -29,7 +29,7 @@ wait
 ulimit -c 0        # disable core dump
 wait
 
-export HOME=$TMPDIR
+#export HOME=$TMPDIR
 i=0
 
 # copy config file and script to cluster
@@ -59,10 +59,10 @@ ls -lrth $TMPDIR 1>&2
 echo "some additional info:" 1>&2
 echo "HOST: $HOST" 1>&2
 echo "PWD: $PWD" 1>&2
-echo "HOME: $HOME " 1>&2
+#echo "HOME: $HOME " 1>&2
 date 1>&2
 
-cd $HOME
+#cd $HOME
 
 export MAX_JOB=$((LSB_JOBINDEX + LSB_JOBINDEX_STEP))
 while [ $LSB_JOBINDEX -lt $MAX_JOB -a $LSB_JOBINDEX -le $LSB_JOBINDEX_END ]; do
