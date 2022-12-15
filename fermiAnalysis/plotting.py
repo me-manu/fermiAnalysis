@@ -1,10 +1,15 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import os
+import logging
 from .utils import interp_2d_likelihood
 from fermipy.plotting import ROIPlotter
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patheffects import withStroke
 from astropy.visualization import wcsaxes
+from astropy import units
+from fermipy.utils import merge_dict
+from gammapy.maps import WcsNDMap
 
 # Create my own colormap
 colors = [
@@ -37,7 +42,7 @@ class MyROIPlotter(ROIPlotter):
                          vmin=None, vmax=None, clip=False, levels=None,
                          zscale='lin', subplot=111, colors=['k'])
 
-        cb_kwargs = dict(orientation='vertical', shrink=1.0, pad=0.1,
+        cb_kwargs = dict(orientation='vertical', shrink=1.0, pad=0.05,
                          extend='max',
                          fraction=0.1, cb_label=None)
 
@@ -69,7 +74,7 @@ class MyROIPlotter(ROIPlotter):
             self.draw_circle(r)
         return ax, cb
 
-def plot_r68(gta, ax, psf_file, **kwargs):
+def plot_r68(gta, ax, psf, **kwargs):
     """
     add the r68 PSF containment radius to a sky map
     """
@@ -80,8 +85,6 @@ def plot_r68(gta, ax, psf_file, **kwargs):
     kwargs.pop("radius", None)
 
     # get the PSF 68% containment radius, use the last component
-    logging.info("using PSF {0:s}".format(os.path.basename(psf_file)))
-    psf = PSFReader(psf_file)
     r68 = psf.containment_radius(gta.energies[0], fraction=0.68)
     logging.info("r68 at {0:.2f} MeV: {1:.2f}".format(gta.energies[0], r68))
 
@@ -90,8 +93,43 @@ def plot_r68(gta, ax, psf_file, **kwargs):
                                    **kwargs)
     ax.add_patch(c_psf)
 
-def tsmap_plot_nice(gta, state):
+def psmap_plot(gta, ps_map_file, psf):
+    fig = plt.figure(figsize=(5.5,4))
+
+    ps_map = WcsNDMap.read(ps_map_file)
+    p = MyROIPlotter(ps_map, roi=gta.roi)
+    p.config['cmap'] = 'coolwarm'
+    ax, cb = p.myplot(vmin=-4, vmax=4,
+                      extend='both',
+                      interpolation='bicubic',
+                      zoom=2,
+                      cb_label="$\log_{10}(\mathrm{PS})$",
+                      cmap='coolwarm')
+
+    ax.coords.grid(color='k', ls=":", lw=0.5)
+    ax.coords['ra'].set_ticks(color="k", size=3.)
+    ax.coords['dec'].set_ticks(color="k", size=3.)
+    ax.coords['ra'].ticks.set_tick_out(True)
+    ax.coords['dec'].ticks.set_tick_out(True)
+    ax.set_xlabel("Right Ascension")
+    ax.set_ylabel("Declination")
+
+    # add PSF circle
+    plot_r68(gta, ax, psf, edgecolor='k', lw=2, ls='-', facecolor='none')
+
+    cen_src = gta.get_sources()[0]
+    ax.annotate("{0:s}".format(cen_src.assoc["ASSOC_TEV"].replace("-","$-$")),
+                xy=(0.05,0.95), va='top', color='w', xycoords="axes fraction", **effect_k)
+
+    fig.subplots_adjust(left=0.02, bottom=0.15, top=0.95, right=0.9)
+    for plot_format in ['png', 'pdf']:
+        plt.savefig(ps_map_file.replace(".fits", "_{1:s}.{0:s}".format(plot_format, cen_src.assoc["ASSOC_TEV"].replace(" ",""))), dpi=120)
+    plt.close("all")
+
+def tsmap_plot_nice(gta, state, psf, psf2=None):
     """make a nice ts map plot"""
+
+    fig = plt.figure(figsize=(5.5,4))
 
     tsmap_file = os.path.join(gta.config['fileio']['workdir'], state + "_pointsource_powerlaw_2.00_tsmap.npy")
     tsmap = np.load(tsmap_file, allow_pickle=True).flat[0]
@@ -105,23 +143,28 @@ def tsmap_plot_nice(gta, state):
                       colors=['w'],
                       zoom=2)
     ax.coords.grid(color='w', ls=":", lw=0.5)
-    ax.coords['ra'].set_ticks(color="k")
-    ax.coords['dec'].set_ticks(color="k")
+    ax.coords['ra'].set_ticks(color="k", size=3.)
+    ax.coords['dec'].set_ticks(color="k", size=3.)
     ax.coords['ra'].ticks.set_tick_out(True)
     ax.coords['dec'].ticks.set_tick_out(True)
+    #ax.coords['ra'].set_major_formatter("hh:mm")
+    #ax.coords['ra'].set_major_formatter("d.dd")
     ax.set_xlabel("Right Ascension")
     ax.set_ylabel("Declination")
 
-    psf_file = os.path.join(gta.config['fileio']['workdir'], "psf_01.fits")
-    plot_r68(gta, ax, psf_file, lw=2, ls='-', edgecolor='w')
+    plot_r68(gta, ax, psf, lw=2, ls='-', edgecolor='w')
+    if psf2 is not None:
+        print("Here")
+        plot_r68(gta, ax, psf2, lw=2, ls='--', edgecolor='w')
 
     cen_src = gta.get_sources()[0]
     #ax.annotate("$\mathbf{{{0:s}}}$".format(cen_src.assoc["ASSOC_TEV"]), xy=(0.05,0.95), va='top', color='k', xycoords="axes fraction", **effect)
-    ax.annotate("{0:s}".format(cen_src.assoc["ASSOC_TEV"]), xy=(0.05,0.95), va='top', color='k', xycoords="axes fraction", **effect)
+    ax.annotate("{0:s}".format(cen_src.assoc["ASSOC_TEV"].replace("-","$-$")),
+                xy=(0.05,0.95), va='top', color='w', xycoords="axes fraction", **effect_k)
 
-    plt.subplots_adjust(left=0.15, bottom=0.1, top=0.95, right=0.9)
+    fig.subplots_adjust(left=0.02, bottom=0.15, top=0.95, right=0.9)
     for plot_format in ['png', 'pdf']:
-        plt.savefig(tsmap_file.replace(".npy", "_new_{1:s}.{0:s}".format(plot_format, cen_src.assoc["ASSOC_TEV"].replace(" ",""))), dpi=120)
+        fig.savefig(tsmap_file.replace(".npy", "_new_{1:s}.{0:s}".format(plot_format, cen_src.assoc["ASSOC_TEV"].replace(" ",""))), dpi=100)
     plt.close("all")
 
 

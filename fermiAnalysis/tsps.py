@@ -8,14 +8,13 @@ import numpy as np
 from . import setup
 from fermipy.gtanalysis import GTAnalysis
 from fermipy.utils import merge_dict
-from gammapy.maps import WcsNDMap
 from astropy.table import Table
 from astropy import units
 from astropy.utils import lazyproperty
 from gammapy.maps import MapAxis
 from scipy.interpolate import UnivariateSpline, RectBivariateSpline
 from scipy.optimize import curve_fit
-from .plotting import effect_k, plot_r68
+from .plotting import psmap_plot
 import fermiAnalysis
 
 
@@ -39,8 +38,6 @@ def generate_psmap(gta, state, overwrite=False, prob_epsilon=1e-7, make_plots=Fa
     mcubes = sorted(mcubes, key=lambda f: os.path.basename(f))
     psmaps = []
 
-    cp = cm
-    script = 
     for i, c in enumerate(ccubes):
 
         logging.info("Running gtpsmap for {0:s} and {1:s}".format(os.path.basename(c), os.path.basename(mcubes[i])))
@@ -88,28 +85,7 @@ def generate_psmap(gta, state, overwrite=False, prob_epsilon=1e-7, make_plots=Fa
         psmaps.append(outfile)
 
         if make_plots:
-            ps_map = WcsNDMap.read(outfile)
-            p = MyROIPlotter(ps_map, roi=gta.roi)
-            p.config['cmap'] = 'coolwarm'
-            ax, cb = p.myplot(vmin=-4, vmax=4, extend='both', interpolation='bicubic',zoom=2, cb_label="$\log_{10}(\mathrm{PS})$", cmap='coolwarm')
-
-            ax.coords.grid(color='k', ls=":", lw=0.5)
-            ax.coords['ra'].set_ticks(color="k")
-            ax.coords['dec'].set_ticks(color="k")
-            ax.coords['ra'].ticks.set_tick_out(True)
-            ax.coords['dec'].ticks.set_tick_out(True)
-            ax.set_xlabel("Right Ascension")
-            ax.set_ylabel("Declination")
-
-            # add PSF circle
-            plot_r68(gta, ax, psf_file, edgecolor='k', lw=2, ls='-', facecolor='none')
-
-            ax.annotate("{0:s}".format(cen_src.assoc["ASSOC_TEV"]), xy=(0.05,0.95), va='top', color='w', xycoords="axes fraction", **effect_k)
-
-            plt.subplots_adjust(left=0.15, bottom=0.12, top=0.95, right=0.9)
-            for plot_format in ['png', 'pdf']:
-                plt.savefig(outfile.replace(".fits", "_{1:s}.{0:s}".format(plot_format, cen_src.assoc["ASSOC_TEV"].replace(" ",""))), dpi=120)
-            plt.close("all")
+            psmap_plot(gta, outfile, psf)
 
     return psmaps
 

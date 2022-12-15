@@ -1,9 +1,10 @@
 import argparse
+import os
 import logging
 from fermipy.gtanalysis import GTAnalysis
 from fermiAnalysis import setup
 from fermiAnalysis.plotting import tsmap_plot_nice
-from fermiAnalysis.tsps import generate_psmap
+from fermiAnalysis.tsps import generate_psmap, PSFReader
 
 if __name__ == "__main__":
     usage = "usage: %(prog)s -c config.yaml"
@@ -32,4 +33,8 @@ if __name__ == "__main__":
 
     if args.make_plots:
         # make ps map plots
-        tsmap_plot_nice(gta, args.state)
+        psf_file = os.path.join(gta.config['fileio']['workdir'], "psf_01.fits")
+        psf_file2 = os.path.join(gta.config['fileio']['workdir'], "psf_00.fits")
+        psf = PSFReader(psf_file)
+        psf2 = PSFReader(psf_file2)
+        tsmap_plot_nice(gta, args.state, psf, psf2=psf2)
