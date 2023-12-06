@@ -256,7 +256,7 @@ def submit_sdf(script, config, option, njobs, **kwargs):
 
         if isinstance(njobs, int):
             if not kwargs['minimumJID']: kwargs['minimumJID'] = 1
-            njobs = '{0[minimumJID]:n}-{1:n}:{0[lsb_steps]:n}'.format(kwargs,njobs)
+            njobs = '{0[minimumJID]:d}-{1:d}:{0[lsb_steps]:d}'.format(kwargs,njobs)
             nsubmit = 1
         elif isinstance(njobs, list):
             if len(njobs) > 100:
@@ -281,14 +281,14 @@ def submit_sdf(script, config, option, njobs, **kwargs):
                 if not kwargs['concurrent']:
                     command += """ -a {0} """.format(njobs_str)
                 else:
-                    command += """ -a {1}%{0[concurrent]:n} """.format(kwargs, njobs_str)
+                    command += """ -a {1}%{0[concurrent]:d} """.format(kwargs, njobs_str)
         else:
             if not kwargs['concurrent']:
                 command += """-a {0:s} """.format(','.join(map(str,njobs[i * 100:(i + 1) * 100
                                                    if (i + 1) * 100 < len(njobs) else -1]))
                                                    )
             else:
-                command += """-a {0:s}%{1[concurrent]:n} """.format(','.join(map(str,njobs[i * 100:(i + 1) * 100
+                command += """-a {0:s}%{1[concurrent]:d} """.format(','.join(map(str,njobs[i * 100:(i + 1) * 100
                                                                     if (i + 1) * 100 < len(njobs) else -1])),
                                                                     kwargs
                                                                     )
@@ -301,12 +301,12 @@ def submit_sdf(script, config, option, njobs, **kwargs):
                                   minutes=int(kwargs['time'].split(":")[1]))
                 time = int(delta.total_seconds() / 60)
 
-            command += """--time {0:n} """.format(time)
+            command += """--time {0:d} """.format(time)
         else:
             command += """-q {0[queue]:s} """.format(kwargs)
 
         if kwargs['ntasks_per_node'] > 1 or kwargs['nodes'] > 1:
-            command += """--ntasks-per-node {0[ntasks_per_node]:n} --nodes {0[nodes]:n} """.format(kwargs)
+            command += """--ntasks-per-node {0[ntasks_per_node]:d} --nodes {0[nodes]:d} """.format(kwargs)
 
         if not kwargs['dependency'] == None:
             command += """--depend={0[dependency]:s} """.format(kwargs)
@@ -315,8 +315,14 @@ def submit_sdf(script, config, option, njobs, **kwargs):
             command += """-p {0[partition]:s} """.format(kwargs)
 
         if "mem" in kwargs.keys():
-            command += """--mem {0[mem]:n} """.format(kwargs)
+            command += """--mem {0[mem]:d} """.format(kwargs)
 
+        if not 'login' in environ['HOSTNAME']:
+            command += """ --account fermi:default"""
+
+        # check if we're submitting 
+        # from S3DF, if so, add the account option 
+        # see https://confluence.slac.stanford.edu/display/SAS/Get+Started+on+S3DF+-+Cheat+Sheet
         command += """ {0:s} """.format(bashScript)
 
         # get the current number of running jobs
@@ -325,7 +331,7 @@ def submit_sdf(script, config, option, njobs, **kwargs):
         if type(kwargs['max_rjobs']) == int:
             rjobs = get_jobs()
             while rjobs >= kwargs['max_rjobs']:
-                logging.info('{0:n} jobs running, max number of running jobs allowed: {1:n}'.format(rjobs, kwargs['max_rjobs']))
+                logging.info('{0:d} jobs running, max number of running jobs allowed: {1:d}'.format(rjobs, kwargs['max_rjobs']))
                 logging.info('Sleep for {0:.2f} s ...'.format(kwargs['sleep'] * 3.))
                 sleep(kwargs['sleep'] * 3.)
                 rjobs = get_jobs()
