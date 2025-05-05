@@ -318,7 +318,7 @@ def submit_sdf(script, config, option, njobs, **kwargs):
             command += """--mem {0[mem]:d} """.format(kwargs)
 
         if not 'login' in environ['HOSTNAME']:
-            command += """ --account fermi:default"""
+            command += """ --account fermi:users"""
 
         # check if we're submitting 
         # from S3DF, if so, add the account option 
