@@ -39,8 +39,7 @@ sdf_defaults = {
     'nmaxjob': None,
     'ntasks_per_node': 1,
     'nodes': 1,
-# TODO activate this once I have permission
-    #'partition': 'fermi',
+    'partition': 'milano',
     'no_resubmit_running_jobs': True
 }
 
@@ -318,7 +317,7 @@ def submit_sdf(script, config, option, njobs, **kwargs):
             command += """--mem {0[mem]:d} """.format(kwargs)
 
         if not 'login' in environ['HOSTNAME']:
-            command += """ --account fermi:users"""
+            command += """ --account fermi:default"""
 
         # check if we're submitting 
         # from S3DF, if so, add the account option 
